@@ -6,8 +6,7 @@ from .config import CFG
 from .utils.seed import seed_everything
 
 from .dataset.loader import load_ml100k_as_events
-from .dataset.preprocessing import build_bipartite_id_maps
-from .dataset.splitting import bounds_event_ratio_split, group_by_sid, gran_to_seconds
+from .dataset.preprocessing import build_bipartite_id_maps, bounds_event_ratio_split, group_by_sid, gran_to_seconds
 
 from .training.runner import init_models_and_opt
 from .training.train_epoch import train_epoch_streaming

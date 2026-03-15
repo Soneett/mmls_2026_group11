@@ -2,7 +2,7 @@ import torch
 import numpy as np
 from collections import deque
 
-from ..graph.streaming import mp_edges_for_sid, compute_z_from_prefix
+from ..graph.graph_compose import mp_edges_for_sid, compute_z_from_prefix
 
 @torch.no_grad()
 def eval_streaming(

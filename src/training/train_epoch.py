@@ -5,9 +5,8 @@ import wandb
 
 from collections import deque
 
-from ..graph.streaming import mp_edges_for_sid, compute_z_from_prefix
+from ..graph.graph_compose import mp_edges_for_sid, compute_z_from_prefix
 from ..dataset.preprocessing import select_last_event_per_user
-
 
 def train_epoch_streaming(
     train_events_by_sid,
