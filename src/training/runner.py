@@ -2,12 +2,10 @@ import torch
 
 from models.encoder import SimpleGCNEncoder
 from models.compressor import Compressor
-
 from .state import TrainState
 
 
 def init_models_and_opt(cfg, num_nodes, device):
-
     node_emb = torch.nn.Embedding(num_nodes, cfg.node_dim).to(device)
     torch.nn.init.normal_(node_emb.weight, std=0.1)
 
@@ -32,18 +30,20 @@ def init_models_and_opt(cfg, num_nodes, device):
         weight_decay=cfg.weight_decay,
     )
 
+    scheduler = None
+
     state = TrainState(
         encoder=encoder,
         compressor=compressor,
         node_emb=node_emb,
         optimizer=optimizer,
-        scheduler=None,
+        scheduler=scheduler,
     )
 
     return state
 
-def init_scheduler(cfg, opt):
 
+def init_scheduler(cfg, opt):
     return torch.optim.lr_scheduler.CosineAnnealingLR(
         opt,
         T_max=cfg.full_train_epochs,
