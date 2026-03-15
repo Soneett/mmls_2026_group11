@@ -1,17 +1,30 @@
 import torch
-from collections import deque
 from typing import List, Tuple
 
-def concat_edges(edge_list: List[Tuple[torch.Tensor, torch.Tensor]]) -> Tuple[torch.Tensor, torch.Tensor]:
+
+def concat_edges(
+    edge_list: List[Tuple[torch.Tensor, torch.Tensor]]
+) -> Tuple[torch.Tensor, torch.Tensor]:
     if len(edge_list) == 0:
-        return torch.empty(0, dtype=torch.long), torch.empty(0, dtype=torch.long)
-    src = torch.cat([s for s, _ in edge_list], dim=0)
-    dst = torch.cat([d for _, d in edge_list], dim=0)
+        return (
+            torch.empty(0, dtype=torch.long),
+            torch.empty(0, dtype=torch.long),
+        )
+
+    src = torch.cat([src for src, _ in edge_list], dim=0)
+    dst = torch.cat([dst for _, dst in edge_list], dim=0)
+
     return src, dst
 
 
-def build_norm_adj(edge_src: torch.Tensor, edge_dst: torch.Tensor, num_nodes: int, device: torch.device) -> torch.Tensor:
+def build_norm_adj(
+    edge_src: torch.Tensor,
+    edge_dst: torch.Tensor,
+    num_nodes: int,
+    device: torch.device,
+) -> torch.Tensor:
     self_idx = torch.arange(num_nodes, dtype=torch.long, device=device)
+
     src = torch.cat([edge_src, self_idx], dim=0)
     dst = torch.cat([edge_dst, self_idx], dim=0)
 
@@ -21,35 +34,33 @@ def build_norm_adj(edge_src: torch.Tensor, edge_dst: torch.Tensor, num_nodes: in
     vals = deg_inv_sqrt[src] * deg_inv_sqrt[dst]
     idx = torch.stack([src, dst], dim=0)
 
-    A = torch.sparse_coo_tensor(idx, vals, size=(num_nodes, num_nodes), device=device)
-    A = A.coalesce()
+    A = torch.sparse_coo_tensor(
+        idx,
+        vals,
+        size=(num_nodes, num_nodes),
+        device=device,
+    ).coalesce()
+
     return A
 
 
-def mp_edges_for_sid(sid, mp_by_sid, device):
-
-    g = mp_by_sid.get(int(sid))
-
-    if g is None or len(g) == 0:
-        return (
-            torch.empty(0, dtype=torch.long, device=device),
-            torch.empty(0, dtype=torch.long, device=device),
-        )
-
-    src = torch.tensor(g["from"].to_numpy(), dtype=torch.long, device=device)
-    dst = torch.tensor(g["to"].to_numpy(), dtype=torch.long, device=device)
-
-    return src, dst
-
-
-def compute_z_from_prefix(window: deque, num_nodes, encoder, compressor, node_emb, device):
-
-    src, dst = concat_edges(list(window))
-
-    A = build_norm_adj(src, dst, num_nodes=num_nodes, device=device)
+def compute_z_from_edges(
+    edge_src: torch.Tensor,
+    edge_dst: torch.Tensor,
+    num_nodes: int,
+    encoder,
+    compressor,
+    node_emb,
+    device: torch.device,
+):
+    A = build_norm_adj(
+        edge_src=edge_src,
+        edge_dst=edge_dst,
+        num_nodes=num_nodes,
+        device=device,
+    )
 
     z_big = encoder(A, node_emb.weight)
-
     z_small = compressor(z_big)
 
     return z_big, z_small
