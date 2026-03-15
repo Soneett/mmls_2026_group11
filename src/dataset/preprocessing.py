@@ -56,3 +56,41 @@ def select_last_event_per_user(batch_df: pd.DataFrame, item_offset: int) -> Tupl
     users_global = torch.tensor(picked["from"].to_numpy(dtype=np.int64), dtype=torch.long)
     pos_items_local = torch.tensor((picked["to"].to_numpy(dtype=np.int64) - item_offset), dtype=torch.long)
     return users_global, pos_items_local
+
+def bounds_event_ratio_split(df, train_ratio, val_ratio):
+
+    df_sorted = df.sort_values("timestamp")
+
+    times = df_sorted["timestamp"].to_numpy()
+
+    n = len(times)
+
+    idx_val = int(n * train_ratio)
+    idx_test = int(n * (train_ratio + val_ratio))
+
+    val_time = times[idx_val]
+    test_time = times[idx_test]
+
+    return val_time, test_time
+
+
+def gran_to_seconds(gran: str) -> int:
+    g = gran.lower()
+
+    if g == "h":
+        return 3600
+
+    if g == "d":
+        return 86400
+
+    raise ValueError("snapshot_gran must be 'h' or 'd'")
+
+
+def group_by_sid(df, sid_col="sid"):
+
+    out = {}
+
+    for sid, g in df.groupby(sid_col):
+        out[int(sid)] = g.reset_index(drop=True)
+
+    return out
