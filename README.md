@@ -1,0 +1,133 @@
+# Missing ML Semester Project Template
+
+## Локальная разработка с uv (рекомендуется)
+
+[uv](https://docs.astral.sh/uv/) — быстрый менеджер зависимостей и окружений. Зависимости заданы в `requirements.txt`. Установка:
+
+```bash
+make install
+# или: uv pip install -r requirements.txt
+```
+
+## Docker
+In this project we use a docker container instead of .venv.
+First of all, we need to build a docker image.
+```bash
+./docker/docker_build.sh
+```
+
+Then we need to run a docker container.
+```bash
+./docker/docker_run.sh
+```
+
+## ClearML
+We use ClearML tool to track experiments and visualize metrics.
+
+Add credentials from https://app.clear.ml/settings/workspace-configuration
+`Settings → Workspace → Create new credentials`
+Copy the block `api { ... }`
+
+```bash
+clearml-init
+# Then paste your copied block
+```
+
+## DVC
+Project manages data using DVC so after repo cloning data needs to be loaded from remote storage or initialized from the start.
+
+All dvc commands should be run from a docker container.
+All git commands should be run from a host terminal.
+
+Check whether DVC is installed:
+```bash
+pip install dvc
+```
+
+To initialized dvc from the very begining:
+```bash
+# initialization
+dvc init
+git add .dvc .gitignore
+git commit -m "Init DVC"
+
+# Creating remote storage
+mkdir -p ./dvc-remote
+dvc remote add -d local_store ./dvc-remote/
+
+# Creating local storage with the first data version
+mkdir -p ./data
+# here needs to add ocr_barcode_data folder with data into ./data dir
+dvc add data/ocr_barcode_data/
+git add data/ocr_barcode_data.dvc
+git commit -m "Track ocr_barcode_data with DVC"
+dvc push
+git push
+```
+
+Check DVC configuration `.dvc/config`:
+```txt
+[core]
+    remote = local_store
+['remote "local_store"']
+    url = ../dvc-remote
+```
+
+## Linter
+```bash
+flake8 barcode_reader
+```
+
+## Type check (mypy)
+```bash
+mypy barcode_reader/
+```
+Или через Makefile: `make typecheck`.
+
+## Tests
+```bash
+pytest tests/
+```
+
+## Обучение (Hydra)
+Конфиг задаётся в `barcode_reader/config/config.yaml`. Запуск с дефолтным конфигом:
+```bash
+python -m barcode_reader.train
+```
+Переопределение параметров через CLI:
+```bash
+python -m barcode_reader.train n_epochs=10 data_config.batch_size=16 data_config.data_path=/path/to/data
+```
+Через Makefile (путь к данным из переменной DATA_PATH):
+```bash
+make train
+# или
+DATA_PATH=/path/to/data make train
+```
+
+## Экспорт в ONNX
+После обучения экспорт чекпоинта в ONNX:
+```bash
+python barcode_reader/utils/convert_torch_to_onnx.py \
+  --checkpoint path/to/checkpoint.ckpt \
+  --config barcode_reader/config/config.yaml \
+  --output model.onnx
+```
+Через Makefile:
+```bash
+make export_onnx CHECKPOINT=path/to/checkpoint.ckpt
+# или с явным конфигом и выходом
+make export_onnx CHECKPOINT=path/to/checkpoint.ckpt CONFIG=barcode_reader/config/config.yaml ONNX_OUT=model.onnx
+```
+Вход модели: `images` — тензор формы `(batch, 3, height, width)`. Выход: `log_probs` — `(seq, batch, num_classes)` (LogSoftmax).
+
+
+Что теперь делаем:
+- mypy
+- hydra
+- Makefile
+- сборка - poetry? uv?
+- Скрипты для конвертации в onnx
+- сервис
+- docker compose
+- gitlab-хуки

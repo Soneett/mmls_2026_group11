@@ -1,0 +1,24 @@
+[project]
+name = "dynamic-gnn-recsys"
+version = "0.1.0"
+description = "Streaming graph neural network recommender system"
+readme = "README.md"
+requires-python = ">=3.10"
+
+dependencies = [
+    "torch",
+    "numpy",
+    "pandas",
+    "tqdm",
+    "wandb",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
