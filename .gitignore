@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# IDEs
+.vscode/
+.idea/
+
+# Checkpoints
+.ipynb_checkpoints/
+checkpoints/
+
+# Logs / temp / wandb
+*.log
+wandb/
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
