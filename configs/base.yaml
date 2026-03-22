@@ -1,0 +1,15 @@
+seed: 42
+device: cpu
+
+epochs: 10
+lr: 0.001
+k: 20
+
+n_layers: 2
+embed_dim: 128
+compressed_dim: 32
+
+window_sids: 5
+
+wandb:
+  project: dynamic_gnn_recommender_movielens
