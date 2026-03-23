@@ -1,11 +1,11 @@
-import pytorch_lightning  as L
-from lightning.pytorch.callbacks import ModelCheckpoint
-from lightning.pytorch.loggers import WandbLogger
+import pytorch_lightning as L
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import WandbLogger
 
 from src.config import load_config
 from src.utils.seed import seed_everything
 from src.lightning.data import TemporalGraphDataModule
-from src.lightning.model import TemporalStreamingModule
+from src.lightning.model import TemporalLightningModule
 
 
 def main():
@@ -15,7 +15,7 @@ def main():
     dm = TemporalGraphDataModule(cfg)
     dm.setup()
 
-    model = TemporalStreamingModule(
+    model = TemporalLightningModule(
         cfg=cfg,
         num_nodes=dm.dataset.num_nodes,
         num_items=dm.dataset.num_items,

@@ -1,4 +1,3 @@
-from collections import deque
 from dataclasses import dataclass
 from typing import Dict, Iterator, Optional, List
 
@@ -41,6 +40,9 @@ class SnapshotDataLoader:
         self.window_sids = window_sids
         self.device = device
         self.sids = sorted(events_by_sid.keys())
+
+    def __len__(self):
+        return len(self.sids)
 
     def __iter__(self) -> Iterator[SnapshotBatch]:
         seen_sids: List[int] = []
