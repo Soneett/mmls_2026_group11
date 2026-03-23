@@ -23,32 +23,31 @@ def main():
     )
 
     wandb_logger = WandbLogger(
-        project=cfg.wandb["project"],
-        name=f"gcn_L{cfg.n_layers}_emb{cfg.embed_dim}_comp{cfg.compressed_dim}_lr{cfg.lr}",
-        config=cfg.__dict__,
+        project=cfg.project,
+        name=cfg.run_name,
     )
 
     checkpoint_cb = ModelCheckpoint(
-        dirpath="checkpoints",
-        filename="best-{epoch}-{val_ndcg:.4f}",
-        monitor="val_ndcg",
+        dirpath=cfg.checkpoint_dir,
+        filename="best-{epoch}-{val_ndcg_small:.4f}",
+        monitor="val_ndcg_small",
         mode="max",
         save_top_k=1,
     )
 
     trainer = L.Trainer(
         max_epochs=cfg.epochs,
+        accelerator="gpu" if "cuda" in cfg.device else ("mps" if cfg.device == "mps" else "cpu"),
+        devices=1,
         logger=wandb_logger,
         callbacks=[checkpoint_cb],
-        accelerator="gpu" if "cuda" in cfg.device else "cpu",
-        devices=1,
         deterministic=True,
-        num_sanity_val_steps=0,
-        enable_progress_bar=True,
+        gradient_clip_val=cfg.grad_clip,
+        log_every_n_steps=1,
     )
 
     trainer.fit(model, datamodule=dm)
-    trainer.test(model, datamodule=dm)
+    trainer.test(model, datamodule=dm, ckpt_path="best")
 
 
 if __name__ == "__main__":
