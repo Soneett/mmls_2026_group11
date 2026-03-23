@@ -1,31 +1,20 @@
-version: '0.0.1'
-
 services:
-  ts:
-    image: ${TS_IMAGE:-pytorch/torchserve:0.7.0-gpu}
-    ports:
-      - 8080:8080
-      - 8081:8081
-    networks:
-      - local_network
-  filebrowser:
-    image: mohamnag/nginx-file-browser
-    ports:
-      - 8011:80
-    networks:
-    networks:
-      - local_network
-    volumes:
-      - $PROJECT_DIR:/opt/www/files/
-  fastapi:
-    image: barcode-ocr-app:latest
-    ports:
-      - 3163:3163
-    networks:
-      - local_network
-    command: bash -c 'make run_app'
+  training:
+    build:
+      context: .
+      dockerfile: Dockerfile
 
-networks:
-  local_network:
-    driver: bridge
-    internal: false
+    working_dir: /app
+
+    volumes:
+      - ./data:/app/data
+
+    environment:
+      WANDB_API_KEY: ${WANDB_API_KEY:-}
+      WANDB_PROJECT: ${WANDB_PROJECT:-dynamic-gnn-recsys}
+      WANDB_ENTITY: ${WANDB_ENTITY:-}
+      PYTHONHASHSEED: "42"
+
+    command: python -m src.train
+
+

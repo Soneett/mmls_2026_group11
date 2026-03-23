@@ -1,4 +1,4 @@
-import lightning as L
+import pytorch_lightning  as L
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 
