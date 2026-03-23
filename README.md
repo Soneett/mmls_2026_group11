@@ -193,3 +193,54 @@ wandb/
 
 - **EDA_movielens100k.ipynb** - разведочный анализ данных
 - **prototype.ipynb** - прототип модели
+
+### Запуск в Docker
+
+Проект поддерживает запуск в изолированном окружении с использованием Docker.
+
+Все команды необходимо выполнять из корня проекта.
+
+## Сборка контейнера
+```bash
+docker-compose build
+```
+## Запуск обучения
+```bash
+docker-compose up --build
+```
+
+При запуске контейнер автоматически:
+
+1. устанавливает зависимости
+2. загружает данные (из папки data/)
+3. запускает обучение (src.train)
+
+## Остановка контейнера
+```bash
+docker-compose down
+```
+## Переменные окружения
+
+Для логирования экспериментов используется **Weights & Biases**.
+
+Необходимо передать WANDB_API_KEY.
+
+Способ 1 (однократный запуск)
+```bash
+WANDB_API_KEY=your_wandb_api_key docker-compose up --build
+```
+Способ 2 (через .env файл)
+
+1. Создайте файл .env в корне проекта:
+```bash
+WANDB_API_KEY=your_wandb_api_key
+WANDB_PROJECT=dynamic-gnn-recsys
+WANDB_ENTITY=your_wandb_entity
+```
+
+2. После этого выполните:
+```bash
+docker-compose up --build
+```
+Docker автоматически подгрузит переменные из .env.
+
