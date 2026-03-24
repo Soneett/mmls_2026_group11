@@ -234,7 +234,6 @@ WANDB_API_KEY=your_wandb_api_key docker-compose up --build
 1. Создайте файл .env в корне проекта:
 ```bash
 WANDB_API_KEY=your_wandb_api_key
-WANDB_PROJECT=dynamic-gnn-recsys
 WANDB_ENTITY=your_wandb_entity
 ```
 
