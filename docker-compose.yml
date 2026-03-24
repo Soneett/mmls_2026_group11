@@ -10,9 +10,9 @@ services:
       - ./data:/app/data
 
     environment:
-      WANDB_API_KEY: ${WANDB_API_KEY:-}
-      WANDB_PROJECT: ${WANDB_PROJECT:-dynamic-gnn-recsys}
-      WANDB_ENTITY: ${WANDB_ENTITY:-}
+      WANDB_API_KEY: ${WANDB_API_KEY}
+      WANDB_PROJECT: ${WANDB_PROJECT}
+      WANDB_ENTITY: ${WANDB_ENTITY}
       PYTHONHASHSEED: "42"
 
     command: python -m src.train

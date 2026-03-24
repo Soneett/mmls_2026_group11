@@ -2,6 +2,8 @@ import pytorch_lightning as L
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
+import os 
+
 from src.config import load_config
 from src.utils.seed import seed_everything
 from src.lightning.data import TemporalGraphDataModule
@@ -24,6 +26,7 @@ def main():
 
     wandb_logger = WandbLogger(
         project=cfg.project,
+        entity=os.getenv("WANDB_ENTITY"),
         name=cfg.run_name,
     )
 
