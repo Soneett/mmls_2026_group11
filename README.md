@@ -10,20 +10,11 @@
 
 ```text
 mmls_2026_group11
-│
-├── data
-│   └── ml100k_ratings.csv
-│
-├── models
-│   ├── encoder.py
-│   ├── decoder.py
-│   └── compressor.py
-│
-├── notebooks
-│   ├── EDA_movielens100k.ipynb
-│   └── prototype.ipynb
-│
 ├── src
+│   ├── lightning
+│   │   ├── data.py
+│   │   └── model.py
+│   │
 │   ├── dataset
 │   │   ├── io.py
 │   │   ├── preprocessing.py
@@ -45,10 +36,30 @@ mmls_2026_group11
 │   ├── config.py
 │   └── train.py
 │
+├── models
+│   ├── encoder.py
+│   ├── compressor.py
+│   └── decoder.py
+│
+├── configs
+│   └── base.yaml
+│
+├── data
+│   └── ml100k_ratings.csv
+│
+├── notebooks
+│   ├── EDA_movielens100k.ipynb
+│   └── prototype.ipynb
+│
 ├── checkpoints
 ├── wandb
 │
+├── Dockerfile
+├── docker-compose.yml
 ├── requirements.txt
+├── pyproject.toml
+├── Makefile
+├── HISTORY.md
 └── README.md
 ```
 
@@ -141,14 +152,11 @@ min ΔQuality  при  d' << d
 
 ### Обучение модели
 
-`src/training/`
+Основная логика обучения организована через **PyTorch Lightning**.
 
-Содержит основной training pipeline:
-
-- цикл обучения
-- вычисление метрик
-- управление состоянием обучения
-- сохранение чекпоинтов
+- `src/lightning/data.py` содержит `LightningDataModule` для подготовки train / val / test dataloader.
+- `src/lightning/model.py` содержит `LightningModule` с логикой обучения, валидации и тестирования.
+- `src/training/` содержит вспомогательные функции для вычисления loss, метрик, инициализации optimizer и служебных объектов состояния.
 
 ## Запуск обучения
 
@@ -158,12 +166,13 @@ min ΔQuality  при  d' << d
 python -m src.train
 ```
 
-Скрипт выполняет:
-
-1. загрузку датасета
-2. построение графа взаимодействий
-3. обучение модели
-4. вычисление метрик
+При запуске:
+1. загружается конфиг из configs/base.yaml,
+2. читается датасет data/ml100k_ratings.csv,
+3. строятся временные срезы взаимодействий,
+4. подготавливаются train / val / test dataloader,
+5. запускается обучение модели через PyTorch Lightning,
+6. сохраняются метрики и checkpoint лучшей модели.
 
 ## Результаты обучения
 
