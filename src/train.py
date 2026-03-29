@@ -1,8 +1,7 @@
+import argparse
 import pytorch_lightning as L
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
-
-import os 
 
 from src.config import load_config
 from src.utils.seed import seed_everything
@@ -11,7 +10,11 @@ from src.lightning.model import TemporalLightningModule
 
 
 def main():
-    cfg = load_config("configs/base.yaml")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default="configs/base.yaml")
+    args = parser.parse_args()
+
+    cfg = load_config(args.config)
     seed_everything(cfg.seed)
 
     dm = TemporalGraphDataModule(cfg)
@@ -26,12 +29,11 @@ def main():
 
     wandb_logger = WandbLogger(
         project=cfg.project,
-        entity=os.getenv("WANDB_ENTITY"),
         name=cfg.run_name,
     )
 
     checkpoint_cb = ModelCheckpoint(
-        dirpath=cfg.checkpoint_dir,
+        dirpath=f"{cfg.checkpoint_dir}/{cfg.run_name}",
         filename="best-{epoch}-{val_ndcg_small:.4f}",
         monitor="val_ndcg_small",
         mode="max",
