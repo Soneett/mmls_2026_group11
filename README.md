@@ -51,9 +51,6 @@ mmls_2026_group11
 │   ├── EDA_movielens100k.ipynb
 │   └── prototype.ipynb
 │
-├── checkpoints
-├── wandb
-│
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
@@ -173,28 +170,6 @@ python -m src.train
 4. подготавливаются train / val / test dataloader,
 5. запускается обучение модели через PyTorch Lightning,
 6. сохраняются метрики и checkpoint лучшей модели.
-
-## Результаты обучения
-
-После обучения создаются следующие артефакты.
-
-### Чекпоинты модели
-
-Сохраняются в:
-
-```text
-checkpoints/
-```
-
-### Логи экспериментов
-
-Логи обучения сохраняются через **Weights & Biases**.
-
-Результаты находятся в:
-
-```text
-wandb/
-```
 
 ## Ноутбуки
 
