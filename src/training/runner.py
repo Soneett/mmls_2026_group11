@@ -14,6 +14,7 @@ def init_models(cfg, num_nodes):
         out_dim=cfg.embed_dim,
         n_layers=cfg.n_layers,
         dropout=cfg.dropout,
+        use_grad_checkpointing=getattr(cfg, "use_grad_checkpointing", False),
     )
 
     compressor = Compressor(
