@@ -36,6 +36,7 @@ class CFG:
     grad_clip: float
 
     use_scheduler: bool
+    use_grad_checkpointing: bool
 
     project: str
     run_name: str

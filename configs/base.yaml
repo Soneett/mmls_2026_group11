@@ -30,6 +30,7 @@ distillation_weight: 0.1
 grad_clip: 1.0
 
 use_scheduler: false
+use_grad_checkpointing: false
 
 project: "dynamic_gnn_recommender_movielens"
 run_name: "gcn_L2_emb64_comp16"
