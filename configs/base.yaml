@@ -31,6 +31,10 @@ grad_clip: 1.0
 
 use_scheduler: false
 use_grad_checkpointing: false
+parallel_mode: "none"  # one of: none, ddp
+devices: 1
+grad_accum_steps: 1
+users_per_batch: 0  # 0 means "all users in sid batch"
 
 project: "dynamic_gnn_recommender_movielens"
 run_name: "gcn_L2_emb64_comp16"

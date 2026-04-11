@@ -37,6 +37,10 @@ class CFG:
 
     use_scheduler: bool
     use_grad_checkpointing: bool
+    parallel_mode: str
+    devices: int
+    grad_accum_steps: int
+    users_per_batch: int
 
     project: str
     run_name: str
