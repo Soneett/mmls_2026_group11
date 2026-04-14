@@ -1,4 +1,6 @@
 import argparse
+import os
+
 import pytorch_lightning as L
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
@@ -27,10 +29,34 @@ def main():
         item_offset=dm.dataset.item_offset,
     )
 
-    wandb_logger = WandbLogger(
-        project=cfg.project,
-        name=cfg.run_name,
-    )
+    # Kaggle + DDP: инициализация wandb в каждом воркере часто приводит к блокировкам.
+    # Логгер создаём только на global rank 0, остальные процессы логируют через sync_dist.
+    # В текущей версии PL у WandbLogger нет флага `rank_zero_only=True`,
+    # поэтому делаем эквивалент вручную через переменные ранга процесса.
+    global_rank = os.environ.get("RANK")
+    local_rank = os.environ.get("LOCAL_RANK", "0")
+    node_rank = os.environ.get("NODE_RANK", "0")
+    if global_rank is not None:
+        is_global_zero = int(global_rank) == 0
+    else:
+        # fallback для окружений, где RANK появляется позже (например, часть notebook-runner'ов)
+        is_global_zero = int(local_rank) == 0 and int(node_rank) == 0
+
+    logger = False
+    if is_global_zero:
+        os.environ.setdefault("WANDB_START_METHOD", "thread")
+        wandb_logger_kwargs = {
+            "project": cfg.project,
+            "name": cfg.run_name,
+        }
+        try:
+            import wandb
+
+            wandb_logger_kwargs["settings"] = wandb.Settings(start_method="thread")
+        except Exception:
+            pass
+
+        logger = WandbLogger(**wandb_logger_kwargs)
 
     checkpoint_cb = ModelCheckpoint(
         dirpath=f"{cfg.checkpoint_dir}/{cfg.run_name}",
@@ -51,7 +77,7 @@ def main():
         accelerator="gpu" if "cuda" in cfg.device else ("mps" if cfg.device == "mps" else "cpu"),
         devices=devices,
         strategy=strategy,
-        logger=wandb_logger,
+        logger=logger,
         callbacks=[checkpoint_cb],
         deterministic=True,
         gradient_clip_val=cfg.grad_clip,
