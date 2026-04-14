@@ -40,14 +40,22 @@ def main():
         save_top_k=1,
     )
 
+    parallel_mode = getattr(cfg, "parallel_mode", "none")
+    devices = getattr(cfg, "devices", 1)
+    strategy = "auto"
+    if parallel_mode == "ddp" and devices and int(devices) > 1:
+        strategy = "ddp_find_unused_parameters_false"
+
     trainer = L.Trainer(
         max_epochs=cfg.epochs,
         accelerator="gpu" if "cuda" in cfg.device else ("mps" if cfg.device == "mps" else "cpu"),
-        devices=1,
+        devices=devices,
+        strategy=strategy,
         logger=wandb_logger,
         callbacks=[checkpoint_cb],
         deterministic=True,
         gradient_clip_val=cfg.grad_clip,
+        accumulate_grad_batches=max(1, int(getattr(cfg, "grad_accum_steps", 1))),
         log_every_n_steps=1,
     )
 

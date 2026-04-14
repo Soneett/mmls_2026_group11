@@ -24,6 +24,10 @@ class TemporalLightningModule(L.LightningModule):
         self.val_outputs = []
         self.test_outputs = []
 
+    @property
+    def _sync_dist(self) -> bool:
+        return getattr(self.cfg, "parallel_mode", "none") == "ddp"
+
     def training_step(self, batch, batch_idx):
         out = compute_train_batch_loss(
             batch=batch,
@@ -37,13 +41,21 @@ class TemporalLightningModule(L.LightningModule):
 
         if out is None:
             loss = self.node_emb.weight.sum() * 0.0
-            self.log("train_loss", 0.0, on_step=False, on_epoch=True, prog_bar=True)
+            self.log("train_loss", 0.0, on_step=False, on_epoch=True, prog_bar=True, sync_dist=self._sync_dist)
             return loss
 
-        self.log("train_loss", out["loss"], on_step=False, on_epoch=True, prog_bar=True, batch_size=out["n_users"])
-        self.log("train_loss_big", out["loss_big"], on_step=False, on_epoch=True, batch_size=out["n_users"])
-        self.log("train_loss_small", out["loss_small"], on_step=False, on_epoch=True, batch_size=out["n_users"])
-        self.log("train_distill_loss", out["distill_loss"], on_step=False, on_epoch=True, batch_size=out["n_users"])
+        self.log(
+            "train_loss",
+            out["loss"],
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=out["n_users"],
+            sync_dist=self._sync_dist,
+        )
+        self.log("train_loss_big", out["loss_big"], on_step=False, on_epoch=True, batch_size=out["n_users"], sync_dist=self._sync_dist)
+        self.log("train_loss_small", out["loss_small"], on_step=False, on_epoch=True, batch_size=out["n_users"], sync_dist=self._sync_dist)
+        self.log("train_distill_loss", out["distill_loss"], on_step=False, on_epoch=True, batch_size=out["n_users"], sync_dist=self._sync_dist)
 
         return out["loss"]
 
@@ -66,10 +78,10 @@ class TemporalLightningModule(L.LightningModule):
     def on_validation_epoch_end(self):
         metrics = aggregate_eval_stats(self.val_outputs, self.graph_meta.num_items)
 
-        self.log("val_ndcg_big", metrics["ndcg_big"], prog_bar=False)
-        self.log("val_ndcg_small", metrics["ndcg_small"], prog_bar=True)
-        self.log("val_coverage_big", metrics["coverage_big"], prog_bar=False)
-        self.log("val_coverage_small", metrics["coverage_small"], prog_bar=True)
+        self.log("val_ndcg_big", metrics["ndcg_big"], prog_bar=False, sync_dist=self._sync_dist)
+        self.log("val_ndcg_small", metrics["ndcg_small"], prog_bar=True, sync_dist=self._sync_dist)
+        self.log("val_coverage_big", metrics["coverage_big"], prog_bar=False, sync_dist=self._sync_dist)
+        self.log("val_coverage_small", metrics["coverage_small"], prog_bar=True, sync_dist=self._sync_dist)
 
     def on_test_epoch_start(self):
         self.test_outputs = []
@@ -90,10 +102,10 @@ class TemporalLightningModule(L.LightningModule):
     def on_test_epoch_end(self):
         metrics = aggregate_eval_stats(self.test_outputs, self.graph_meta.num_items)
 
-        self.log("test_ndcg_big", metrics["ndcg_big"])
-        self.log("test_ndcg_small", metrics["ndcg_small"])
-        self.log("test_coverage_big", metrics["coverage_big"])
-        self.log("test_coverage_small", metrics["coverage_small"])
+        self.log("test_ndcg_big", metrics["ndcg_big"], sync_dist=self._sync_dist)
+        self.log("test_ndcg_small", metrics["ndcg_small"], sync_dist=self._sync_dist)
+        self.log("test_coverage_big", metrics["coverage_big"], sync_dist=self._sync_dist)
+        self.log("test_coverage_small", metrics["coverage_small"], sync_dist=self._sync_dist)
 
     def configure_optimizers(self):
         optimizer = init_optimizer(

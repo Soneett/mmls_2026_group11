@@ -3,6 +3,7 @@ from typing import Dict, Iterator, Optional, List
 
 import pandas as pd
 import torch
+import torch.distributed as dist
 
 
 @dataclass
@@ -34,11 +35,15 @@ class SnapshotDataLoader:
         mp_by_sid: Dict[int, pd.DataFrame],
         window_sids: int,
         device: torch.device,
+        users_per_batch: int = 0,
+        split_by_user_for_ddp: bool = False,
     ):
         self.events_by_sid = events_by_sid
         self.mp_by_sid = mp_by_sid
         self.window_sids = window_sids
         self.device = device
+        self.users_per_batch = users_per_batch
+        self.split_by_user_for_ddp = split_by_user_for_ddp
         self.sids = sorted(events_by_sid.keys())
 
     def __len__(self):
@@ -46,6 +51,8 @@ class SnapshotDataLoader:
 
     def __iter__(self) -> Iterator[SnapshotBatch]:
         seen_sids: List[int] = []
+        world_size = dist.get_world_size() if dist.is_available() and dist.is_initialized() else 1
+        rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
 
         for sid in self.sids:
             events_df = self.events_by_sid[sid]
@@ -68,15 +75,33 @@ class SnapshotDataLoader:
             )
 
             prefix_src, prefix_dst = _df_to_edge_tensors(prefix_df, self.device)
-            target_src, target_dst = _df_to_edge_tensors(events_df, self.device)
+            sid_batches = self._split_events_by_users(events_df)
+            if self.split_by_user_for_ddp and world_size > 1:
+                sid_batches = sid_batches[rank::world_size]
 
-            yield SnapshotBatch(
-                sid=int(sid),
-                events=events_df,
-                prefix_src=prefix_src,
-                prefix_dst=prefix_dst,
-                target_src=target_src,
-                target_dst=target_dst,
-            )
+            for batch_events_df in sid_batches:
+                target_src, target_dst = _df_to_edge_tensors(batch_events_df, self.device)
+                yield SnapshotBatch(
+                    sid=int(sid),
+                    events=batch_events_df,
+                    prefix_src=prefix_src,
+                    prefix_dst=prefix_dst,
+                    target_src=target_src,
+                    target_dst=target_dst,
+                )
 
             seen_sids.append(sid)
+
+    def _split_events_by_users(self, events_df: pd.DataFrame) -> List[pd.DataFrame]:
+        if events_df is None or len(events_df) == 0:
+            return [events_df]
+        if self.users_per_batch <= 0:
+            return [events_df]
+
+        uniq_users = events_df["from"].drop_duplicates().to_numpy()
+        batches = []
+        for start in range(0, len(uniq_users), self.users_per_batch):
+            batch_users = uniq_users[start:start + self.users_per_batch]
+            batches.append(events_df[events_df["from"].isin(batch_users)])
+
+        return batches

@@ -20,6 +20,8 @@ class TemporalGraphDataModule(L.LightningDataModule):
             mp_by_sid=self.dataset.mp_by_sid,
             window_sids=self.cfg.window_sids,
             device=torch.device(self.cfg.device),
+            users_per_batch=self.cfg.users_per_batch,
+            split_by_user_for_ddp=self.cfg.parallel_mode == "ddp",
         )
 
     def val_dataloader(self):
@@ -28,6 +30,8 @@ class TemporalGraphDataModule(L.LightningDataModule):
             mp_by_sid=self.dataset.mp_by_sid,
             window_sids=self.cfg.window_sids,
             device=torch.device(self.cfg.device),
+            users_per_batch=0,
+            split_by_user_for_ddp=False,
         )
 
     def test_dataloader(self):
@@ -36,4 +40,6 @@ class TemporalGraphDataModule(L.LightningDataModule):
             mp_by_sid=self.dataset.mp_by_sid,
             window_sids=self.cfg.window_sids,
             device=torch.device(self.cfg.device),
+            users_per_batch=0,
+            split_by_user_for_ddp=False,
         )
