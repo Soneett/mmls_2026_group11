@@ -1,5 +1,4 @@
 import pytorch_lightning as L
-import torch
 
 from src.training.runner import init_models, init_optimizer, init_scheduler
 from src.training.train_epoch import compute_train_batch_loss
@@ -23,6 +22,9 @@ class TemporalLightningModule(L.LightningModule):
 
         self.val_outputs = []
         self.test_outputs = []
+
+    def transfer_batch_to_device(self, batch, device, dataloader_idx):
+        return batch
 
     def training_step(self, batch, batch_idx):
         out = compute_train_batch_loss(
@@ -64,7 +66,11 @@ class TemporalLightningModule(L.LightningModule):
             self.val_outputs.append(stats)
 
     def on_validation_epoch_end(self):
-        metrics = aggregate_eval_stats(self.val_outputs, self.graph_meta.num_items)
+        metrics = aggregate_eval_stats(
+            self.val_outputs,
+            self.graph_meta.num_items,
+            device=self.device,
+        )
 
         self.log("val_ndcg_big", metrics["ndcg_big"], prog_bar=False)
         self.log("val_ndcg_small", metrics["ndcg_small"], prog_bar=True)
@@ -88,7 +94,11 @@ class TemporalLightningModule(L.LightningModule):
             self.test_outputs.append(stats)
 
     def on_test_epoch_end(self):
-        metrics = aggregate_eval_stats(self.test_outputs, self.graph_meta.num_items)
+        metrics = aggregate_eval_stats(
+            self.test_outputs,
+            self.graph_meta.num_items,
+            device=self.device,
+        )
 
         self.log("test_ndcg_big", metrics["ndcg_big"])
         self.log("test_ndcg_small", metrics["ndcg_small"])

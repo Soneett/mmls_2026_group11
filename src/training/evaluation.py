@@ -1,8 +1,12 @@
 import math
 import torch
+import torch.distributed as dist
 
 from ..graph.graph_compose import compute_z_from_edges
-from ..dataset.preprocessing import select_last_event_per_user
+
+
+def _is_dist():
+    return dist.is_available() and dist.is_initialized()
 
 
 @torch.no_grad()
@@ -18,9 +22,12 @@ def compute_eval_batch_stats(
     if len(batch.events) == 0:
         return None
 
+    prefix_src = batch.prefix_src.to(device, non_blocking=True)
+    prefix_dst = batch.prefix_dst.to(device, non_blocking=True)
+
     z_big, z_small = compute_z_from_edges(
-        edge_src=batch.prefix_src,
-        edge_dst=batch.prefix_dst,
+        edge_src=prefix_src,
+        edge_dst=prefix_dst,
         num_nodes=graph_meta.num_nodes,
         encoder=encoder,
         compressor=compressor,
@@ -28,7 +35,7 @@ def compute_eval_batch_stats(
         device=device,
     )
 
-    batch_targets = select_last_event_per_user(batch.events)
+    batch_targets = batch.events
     if len(batch_targets) == 0:
         return None
 
@@ -88,15 +95,7 @@ def compute_eval_batch_stats(
     }
 
 
-def aggregate_eval_stats(outputs, num_items: int):
-    if len(outputs) == 0:
-        return {
-            "ndcg_big": 0.0,
-            "ndcg_small": 0.0,
-            "coverage_big": 0.0,
-            "coverage_small": 0.0,
-        }
-
+def aggregate_eval_stats(outputs, num_items: int, device: torch.device):
     total_ndcg_big = 0.0
     total_ndcg_small = 0.0
     total_users = 0
@@ -108,15 +107,35 @@ def aggregate_eval_stats(outputs, num_items: int):
         total_ndcg_big += out["ndcg_big_sum"]
         total_ndcg_small += out["ndcg_small_sum"]
         total_users += out["n_users"]
-
         topk_union_big.update(out["topk_union_big"])
         topk_union_small.update(out["topk_union_small"])
 
-    denom = max(total_users, 1)
+    stats = torch.tensor(
+        [total_ndcg_big, total_ndcg_small, float(total_users)],
+        device=device,
+        dtype=torch.float64,
+    )
+
+    mask_big = torch.zeros(num_items, device=device, dtype=torch.int32)
+    mask_small = torch.zeros(num_items, device=device, dtype=torch.int32)
+
+    if len(topk_union_big) > 0:
+        mask_big[torch.tensor(list(topk_union_big), device=device, dtype=torch.long)] = 1
+    if len(topk_union_small) > 0:
+        mask_small[torch.tensor(list(topk_union_small), device=device, dtype=torch.long)] = 1
+
+    if _is_dist():
+        dist.all_reduce(stats, op=dist.ReduceOp.SUM)
+        dist.all_reduce(mask_big, op=dist.ReduceOp.MAX)
+        dist.all_reduce(mask_small, op=dist.ReduceOp.MAX)
+
+    total_ndcg_big = stats[0].item()
+    total_ndcg_small = stats[1].item()
+    total_users = max(int(stats[2].item()), 1)
 
     return {
-        "ndcg_big": total_ndcg_big / denom,
-        "ndcg_small": total_ndcg_small / denom,
-        "coverage_big": len(topk_union_big) / num_items,
-        "coverage_small": len(topk_union_small) / num_items,
+        "ndcg_big": total_ndcg_big / total_users,
+        "ndcg_small": total_ndcg_small / total_users,
+        "coverage_big": mask_big.sum().item() / num_items,
+        "coverage_small": mask_small.sum().item() / num_items,
     }

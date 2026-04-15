@@ -4,6 +4,8 @@ from typing import Dict, Iterator, Optional, List
 import pandas as pd
 import torch
 
+from .preprocessing import select_last_event_per_user
+
 
 @dataclass
 class SnapshotBatch:
@@ -27,6 +29,20 @@ def _df_to_edge_tensors(df: Optional[pd.DataFrame], device: torch.device):
     return src, dst
 
 
+def _shard_events_by_user(events_df: pd.DataFrame, rank: int, world_size: int) -> pd.DataFrame:
+    if events_df is None or len(events_df) == 0 or world_size == 1:
+        return events_df
+
+    per_user = (
+        select_last_event_per_user(events_df)
+        .sort_values(["from", "timestamp"])
+        .reset_index(drop=True)
+    )
+
+    local = per_user.iloc[rank::world_size].reset_index(drop=True)
+    return local
+
+
 class SnapshotDataLoader:
     def __init__(
         self,
@@ -34,11 +50,15 @@ class SnapshotDataLoader:
         mp_by_sid: Dict[int, pd.DataFrame],
         window_sids: int,
         device: torch.device,
+        rank: int = 0,
+        world_size: int = 1,
     ):
         self.events_by_sid = events_by_sid
         self.mp_by_sid = mp_by_sid
         self.window_sids = window_sids
         self.device = device
+        self.rank = rank
+        self.world_size = world_size
         self.sids = sorted(events_by_sid.keys())
 
     def __len__(self):
@@ -48,7 +68,12 @@ class SnapshotDataLoader:
         seen_sids: List[int] = []
 
         for sid in self.sids:
-            events_df = self.events_by_sid[sid]
+            full_events_df = self.events_by_sid[sid]
+            local_events_df = _shard_events_by_user(
+                full_events_df,
+                rank=self.rank,
+                world_size=self.world_size,
+            )
 
             if self.window_sids == 0:
                 prefix_sids = seen_sids
@@ -68,11 +93,11 @@ class SnapshotDataLoader:
             )
 
             prefix_src, prefix_dst = _df_to_edge_tensors(prefix_df, self.device)
-            target_src, target_dst = _df_to_edge_tensors(events_df, self.device)
+            target_src, target_dst = _df_to_edge_tensors(local_events_df, self.device)
 
             yield SnapshotBatch(
                 sid=int(sid),
-                events=events_df,
+                events=local_events_df,
                 prefix_src=prefix_src,
                 prefix_dst=prefix_dst,
                 target_src=target_src,
