@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 from typing import Dict, Iterator, Optional, List
 
 import pandas as pd
@@ -77,7 +78,13 @@ class SnapshotDataLoader:
             prefix_src, prefix_dst = _df_to_edge_tensors(prefix_df, self.device)
             sid_batches = self._split_events_by_users(events_df)
             if self.split_by_user_for_ddp and world_size > 1:
-                sid_batches = sid_batches[rank::world_size]
+                sid_batches = self._split_batches_evenly_across_ranks(
+                    sid_batches=sid_batches,
+                    events_df=events_df,
+                    world_size=world_size,
+                    rank=rank,
+                )
+                print(f"RANK {rank}: num_batches = {len(sid_batches)}", flush=True)
 
             for batch_events_df in sid_batches:
                 target_src, target_dst = _df_to_edge_tensors(batch_events_df, self.device)
@@ -105,3 +112,30 @@ class SnapshotDataLoader:
             batches.append(events_df[events_df["from"].isin(batch_users)])
 
         return batches
+
+    def _split_batches_evenly_across_ranks(
+        self,
+        sid_batches: List[pd.DataFrame],
+        events_df: Optional[pd.DataFrame],
+        world_size: int,
+        rank: int,
+    ) -> List[pd.DataFrame]:
+        # Safety: if for some reason no batches exist, create one empty batch.
+        if len(sid_batches) == 0:
+            sid_batches = [self._empty_events_like(events_df)]
+
+        local_batches = sid_batches[rank::world_size]
+
+        # Every rank must iterate the same number of times to avoid DDP hangs.
+        target_num_batches = max(1, math.ceil(len(sid_batches) / world_size))
+        if len(local_batches) < target_num_batches:
+            dummy = self._empty_events_like(events_df)
+            local_batches = local_batches + [dummy] * (target_num_batches - len(local_batches))
+
+        return local_batches
+
+    @staticmethod
+    def _empty_events_like(events_df: Optional[pd.DataFrame]) -> pd.DataFrame:
+        if events_df is None:
+            return pd.DataFrame(columns=["from", "to"])
+        return events_df.iloc[0:0].copy()
