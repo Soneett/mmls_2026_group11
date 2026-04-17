@@ -14,26 +14,42 @@ class TemporalGraphDataModule(L.LightningDataModule):
     def setup(self, stage=None):
         self.dataset = build_temporal_graph_dataset(self.cfg)
 
+    def _dist_info(self):
+        if self.trainer is None:
+            return 0, 1
+        rank = int(getattr(self.trainer, "global_rank", 0))
+        world_size = int(getattr(self.trainer, "world_size", 1))
+        return rank, world_size
+
     def train_dataloader(self):
+        rank, world_size = self._dist_info()
         return SnapshotDataLoader(
             events_by_sid=self.dataset.train_events_by_sid,
             mp_by_sid=self.dataset.mp_by_sid,
             window_sids=self.cfg.window_sids,
-            device=torch.device(self.cfg.device),
+            device=torch.device("cpu"),
+            rank=rank,
+            world_size=world_size,
         )
 
     def val_dataloader(self):
+        rank, world_size = self._dist_info()
         return SnapshotDataLoader(
             events_by_sid=self.dataset.val_events_by_sid,
             mp_by_sid=self.dataset.mp_by_sid,
             window_sids=self.cfg.window_sids,
-            device=torch.device(self.cfg.device),
+            device=torch.device("cpu"),
+            rank=rank,
+            world_size=world_size,
         )
 
     def test_dataloader(self):
+        rank, world_size = self._dist_info()
         return SnapshotDataLoader(
             events_by_sid=self.dataset.test_events_by_sid,
             mp_by_sid=self.dataset.mp_by_sid,
             window_sids=self.cfg.window_sids,
-            device=torch.device(self.cfg.device),
+            device=torch.device("cpu"),
+            rank=rank,
+            world_size=world_size,
         )

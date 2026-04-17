@@ -1,7 +1,9 @@
 import argparse
+import torch
 import pytorch_lightning as L
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.strategies import DeepSpeedStrategy
 
 from src.config import load_config
 from src.utils.seed import seed_everything
@@ -40,10 +42,21 @@ def main():
         save_top_k=1,
     )
 
+    strategy = DeepSpeedStrategy(
+        stage=getattr(cfg, "zero_stage", 1),
+        offload_optimizer=getattr(cfg, "zero_offload_optimizer", False),
+        offload_optimizer_device=getattr(cfg, "zero_offload_optimizer_device", "cpu"),
+    )
+
+    accelerator = "gpu" if torch.cuda.is_available() and "cuda" in cfg.device else "cpu"
+
     trainer = L.Trainer(
         max_epochs=cfg.epochs,
-        accelerator="gpu" if "cuda" in cfg.device else ("mps" if cfg.device == "mps" else "cpu"),
-        devices=1,
+        accelerator=accelerator,
+        devices=getattr(cfg, "devices", 1),
+        num_nodes=getattr(cfg, "num_nodes", 1),
+        strategy=strategy if accelerator == "gpu" else "auto",
+        use_distributed_sampler=False,
         logger=wandb_logger,
         callbacks=[checkpoint_cb],
         deterministic=True,
