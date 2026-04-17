@@ -24,6 +24,9 @@ class TemporalLightningModule(L.LightningModule):
         self.val_outputs = []
         self.test_outputs = []
 
+    def transfer_batch_to_device(self, batch, device, dataloader_idx):
+        return batch
+
     def training_step(self, batch, batch_idx):
         out = compute_train_batch_loss(
             batch=batch,
@@ -72,7 +75,11 @@ class TemporalLightningModule(L.LightningModule):
             self.val_outputs.append(stats)
 
     def on_validation_epoch_end(self):
-        metrics = aggregate_eval_stats(self.val_outputs, self.graph_meta.num_items)
+        metrics = aggregate_eval_stats(
+            self.val_outputs,
+            self.graph_meta.num_items,
+            device=self.device,
+        )
 
         self.log("val_ndcg_big", metrics["ndcg_big"], on_step=False, on_epoch=True, prog_bar=False, sync_dist=True)
         self.log("val_ndcg_small", metrics["ndcg_small"], on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
@@ -96,7 +103,11 @@ class TemporalLightningModule(L.LightningModule):
             self.test_outputs.append(stats)
 
     def on_test_epoch_end(self):
-        metrics = aggregate_eval_stats(self.test_outputs, self.graph_meta.num_items)
+        metrics = aggregate_eval_stats(
+            self.test_outputs,
+            self.graph_meta.num_items,
+            device=self.device,
+        )
 
         self.log("test_ndcg_big", metrics["ndcg_big"], on_step=False, on_epoch=True, sync_dist=True)
         self.log("test_ndcg_small", metrics["ndcg_small"], on_step=False, on_epoch=True, sync_dist=True)

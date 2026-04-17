@@ -6,6 +6,8 @@ import pandas as pd
 import torch
 import torch.distributed as dist
 
+from .preprocessing import select_last_event_per_user
+
 
 @dataclass
 class SnapshotBatch:
@@ -29,6 +31,20 @@ def _df_to_edge_tensors(df: Optional[pd.DataFrame], device: torch.device):
     return src, dst
 
 
+def _shard_events_by_user(events_df: pd.DataFrame, rank: int, world_size: int) -> pd.DataFrame:
+    if events_df is None or len(events_df) == 0 or world_size == 1:
+        return events_df
+
+    per_user = (
+        select_last_event_per_user(events_df)
+        .sort_values(["from", "timestamp"])
+        .reset_index(drop=True)
+    )
+
+    local = per_user.iloc[rank::world_size].reset_index(drop=True)
+    return local
+
+
 class SnapshotDataLoader:
     def __init__(
         self,
@@ -38,6 +54,8 @@ class SnapshotDataLoader:
         device: torch.device,
         users_per_batch: int = 0,
         split_by_user_for_ddp: bool = False,
+        rank: int = 0,
+        world_size: int = 1,
     ):
         self.events_by_sid = events_by_sid
         self.mp_by_sid = mp_by_sid
@@ -45,6 +63,8 @@ class SnapshotDataLoader:
         self.device = device
         self.users_per_batch = users_per_batch
         self.split_by_user_for_ddp = split_by_user_for_ddp
+        self.rank = rank
+        self.world_size = world_size
         self.sids = sorted(events_by_sid.keys())
 
     def __len__(self):
@@ -56,7 +76,12 @@ class SnapshotDataLoader:
         rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
 
         for sid in self.sids:
-            events_df = self.events_by_sid[sid]
+            full_events_df = self.events_by_sid[sid]
+            local_events_df = _shard_events_by_user(
+                full_events_df,
+                rank=self.rank,
+                world_size=self.world_size,
+            )
 
             if self.window_sids == 0:
                 prefix_sids = seen_sids
@@ -139,3 +164,15 @@ class SnapshotDataLoader:
         if events_df is None:
             return pd.DataFrame(columns=["from", "to"])
         return events_df.iloc[0:0].copy()
+            target_src, target_dst = _df_to_edge_tensors(local_events_df, self.device)
+
+            yield SnapshotBatch(
+                sid=int(sid),
+                events=local_events_df,
+                prefix_src=prefix_src,
+                prefix_dst=prefix_dst,
+                target_src=target_src,
+                target_dst=target_dst,
+            )
+
+            seen_sids.append(sid)

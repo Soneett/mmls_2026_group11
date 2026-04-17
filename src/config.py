@@ -4,36 +4,36 @@ import yaml
 
 @dataclass
 class CFG:
-    ml100k_path: str
-    sep: str
-    snapshot_gran: str
-    window_sids: int
+    ml100k_path: str = "data/ml100k_ratings.csv"
+    sep: str = ";"
+    snapshot_gran: str = "d"
+    window_sids: int = 0
 
-    node_dim: int
-    embed_dim: int
-    compressed_dim: int
+    node_dim: int = 64
+    embed_dim: int = 64
+    compressed_dim: int = 16
 
-    n_layers: int
-    dropout: float
+    n_layers: int = 2
+    dropout: float = 0.1
 
-    lr: float
-    weight_decay: float
-    epochs: int
+    lr: float = 0.0003
+    weight_decay: float = 0.00001
+    epochs: int = 50
 
-    train_ratio: float
-    val_ratio: float
-    test_ratio: float
+    train_ratio: float = 0.7
+    val_ratio: float = 0.15
+    test_ratio: float = 0.15
 
-    k: int
+    k: int = 20
 
-    seed: int
-    device: str
+    seed: int = 1337
+    device: str = "cpu"
 
-    debug_sids: int
-    full_train_epochs: int
+    debug_sids: int = 3
+    full_train_epochs: int = 30
 
-    distillation_weight: float
-    grad_clip: float
+    distillation_weight: float = 0.1
+    grad_clip: float = 1.0
 
     use_scheduler: bool
     use_grad_checkpointing: bool
@@ -42,9 +42,16 @@ class CFG:
     grad_accum_steps: int
     users_per_batch: int
 
-    project: str
-    run_name: str
-    checkpoint_dir: str
+    project: str = "dynamic_gnn_recommender_movielens"
+    run_name: str = "gcn_L2_emb64_comp16"
+    checkpoint_dir: str = "checkpoints"
+
+    # distributed / deepspeed
+    devices: int = 1
+    num_nodes: int = 1
+    zero_stage: int = 1
+    zero_offload_optimizer: bool = False
+    zero_offload_optimizer_device: str = "cpu"
 
 
 def load_config(path: str) -> CFG:
