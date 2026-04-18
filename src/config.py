@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+
 import yaml
 
 
@@ -35,19 +36,18 @@ class CFG:
     distillation_weight: float = 0.1
     grad_clip: float = 1.0
 
-    use_scheduler: bool
-    use_grad_checkpointing: bool
-    parallel_mode: str
-    devices: int
-    grad_accum_steps: int
-    users_per_batch: int
+    use_scheduler: bool = False
+    use_grad_checkpointing: bool = False
+    parallel_mode: str = "none"
+    devices: int = 1
+    grad_accum_steps: int = 1
+    users_per_batch: int = 0
 
     project: str = "dynamic_gnn_recommender_movielens"
     run_name: str = "gcn_L2_emb64_comp16"
     checkpoint_dir: str = "checkpoints"
 
     # distributed / deepspeed
-    devices: int = 1
     num_nodes: int = 1
     zero_stage: int = 1
     zero_offload_optimizer: bool = False
@@ -55,6 +55,6 @@ class CFG:
 
 
 def load_config(path: str) -> CFG:
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
     return CFG(**data)

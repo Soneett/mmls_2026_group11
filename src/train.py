@@ -1,16 +1,36 @@
 import argparse
 import os
 
-import torch
 import pytorch_lightning as L
+import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.strategies import DeepSpeedStrategy
 
 from src.config import load_config
-from src.utils.seed import seed_everything
 from src.lightning.data import TemporalGraphDataModule
 from src.lightning.model import TemporalLightningModule
+from src.utils.seed import seed_everything
+
+
+def _build_strategy(cfg, accelerator: str):
+    if accelerator != "gpu":
+        return "auto"
+
+    parallel_mode = getattr(cfg, "parallel_mode", "none")
+    devices = int(getattr(cfg, "devices", 1))
+
+    if parallel_mode == "ddp" and devices > 1:
+        return "ddp_find_unused_parameters_false"
+
+    if parallel_mode in {"zero1", "deepspeed_zero1"}:
+        return DeepSpeedStrategy(
+            stage=int(getattr(cfg, "zero_stage", 1)),
+            offload_optimizer=bool(getattr(cfg, "zero_offload_optimizer", False)),
+            offload_optimizer_device=getattr(cfg, "zero_offload_optimizer_device", "cpu"),
+        )
+
+    return "auto"
 
 
 def main():
@@ -31,15 +51,10 @@ def main():
         item_offset=dm.dataset.item_offset,
     )
 
-    # DDP-safe W&B in Kaggle/notebook launchers:
-    # logger создаётся во всех процессах, но не-zero rank отключает отправку логов.
-    if int(os.environ.get("LOCAL_RANK", 0)) != 0:
-        os.environ["WANDB_MODE"] = "disabled"
-
-    logger = WandbLogger(
-        project=cfg.project,
-        name=cfg.run_name,
-    )
+    global_rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", 0)))
+    logger = None
+    if global_rank == 0:
+        logger = WandbLogger(project=cfg.project, name=cfg.run_name)
 
     checkpoint_cb = ModelCheckpoint(
         dirpath=f"{cfg.checkpoint_dir}/{cfg.run_name}",
@@ -49,30 +64,17 @@ def main():
         save_top_k=1,
     )
 
-    parallel_mode = getattr(cfg, "parallel_mode", "none")
-    devices = getattr(cfg, "devices", 1)
-    strategy = "auto"
-    if parallel_mode == "ddp" and devices and int(devices) > 1:
-        strategy = "ddp_find_unused_parameters_false"
-
-
-
-    strategy = DeepSpeedStrategy(
-        stage=getattr(cfg, "zero_stage", 1),
-        offload_optimizer=getattr(cfg, "zero_offload_optimizer", False),
-        offload_optimizer_device=getattr(cfg, "zero_offload_optimizer_device", "cpu"),
-    )
-
     accelerator = "gpu" if torch.cuda.is_available() and "cuda" in cfg.device else "cpu"
+    strategy = _build_strategy(cfg, accelerator)
 
     trainer = L.Trainer(
         max_epochs=cfg.epochs,
         accelerator=accelerator,
-        devices=getattr(cfg, "devices", 1),
-        num_nodes=getattr(cfg, "num_nodes", 1),
-        strategy=strategy if accelerator == "gpu" else "auto",
+        devices=int(getattr(cfg, "devices", 1)),
+        num_nodes=int(getattr(cfg, "num_nodes", 1)),
+        strategy=strategy,
         use_distributed_sampler=False,
-        logger=wandb_logger,
+        logger=logger,
         callbacks=[checkpoint_cb],
         deterministic=True,
         gradient_clip_val=cfg.grad_clip,

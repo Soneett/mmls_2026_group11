@@ -1,8 +1,8 @@
 import pytorch_lightning as L
 import torch
 
-from src.dataset.temporal_dataset import build_temporal_graph_dataset
 from src.dataset.temporal_dataloader import SnapshotDataLoader
+from src.dataset.temporal_dataset import build_temporal_graph_dataset
 
 
 class TemporalGraphDataModule(L.LightningDataModule):
@@ -21,44 +21,36 @@ class TemporalGraphDataModule(L.LightningDataModule):
         world_size = int(getattr(self.trainer, "world_size", 1))
         return rank, world_size
 
-    def train_dataloader(self):
+    def _loader(self, events_by_sid, split_by_user_for_ddp: bool, users_per_batch: int):
         rank, world_size = self._dist_info()
         return SnapshotDataLoader(
-            events_by_sid=self.dataset.train_events_by_sid,
+            events_by_sid=events_by_sid,
             mp_by_sid=self.dataset.mp_by_sid,
             window_sids=self.cfg.window_sids,
-            device=torch.device(self.cfg.device),
-            users_per_batch=self.cfg.users_per_batch,
-            split_by_user_for_ddp=self.cfg.parallel_mode == "ddp",
             device=torch.device("cpu"),
+            users_per_batch=users_per_batch,
+            split_by_user_for_ddp=split_by_user_for_ddp,
             rank=rank,
             world_size=world_size,
+        )
+
+    def train_dataloader(self):
+        return self._loader(
+            events_by_sid=self.dataset.train_events_by_sid,
+            split_by_user_for_ddp=self.cfg.parallel_mode == "ddp",
+            users_per_batch=self.cfg.users_per_batch,
         )
 
     def val_dataloader(self):
-        rank, world_size = self._dist_info()
-        return SnapshotDataLoader(
+        return self._loader(
             events_by_sid=self.dataset.val_events_by_sid,
-            mp_by_sid=self.dataset.mp_by_sid,
-            window_sids=self.cfg.window_sids,
-            device=torch.device(self.cfg.device),
-            users_per_batch=0,
             split_by_user_for_ddp=False,
-            device=torch.device("cpu"),
-            rank=rank,
-            world_size=world_size,
+            users_per_batch=0,
         )
 
     def test_dataloader(self):
-        rank, world_size = self._dist_info()
-        return SnapshotDataLoader(
+        return self._loader(
             events_by_sid=self.dataset.test_events_by_sid,
-            mp_by_sid=self.dataset.mp_by_sid,
-            window_sids=self.cfg.window_sids,
-            device=torch.device(self.cfg.device),
-            users_per_batch=0,
             split_by_user_for_ddp=False,
-            device=torch.device("cpu"),
-            rank=rank,
-            world_size=world_size,
+            users_per_batch=0,
         )
