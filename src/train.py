@@ -27,14 +27,18 @@ def main():
         item_offset=dm.dataset.item_offset,
     )
 
-    wandb_logger = WandbLogger(
-        project=cfg.project,
-        name=cfg.run_name,
+    wandb_logger = (
+        WandbLogger(
+            project=cfg.project,
+            name=cfg.run_name,
+        )
+        if getattr(cfg, "use_wandb", True)
+        else False
     )
 
     checkpoint_cb = ModelCheckpoint(
         dirpath=f"{cfg.checkpoint_dir}/{cfg.run_name}",
-        filename="best-{epoch}-{val_ndcg_small:.4f}",
+        filename=cfg.checkpoint_filename,
         monitor="val_ndcg_small",
         mode="max",
         save_top_k=1,

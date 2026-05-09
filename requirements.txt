@@ -6,4 +6,3 @@ pytorch_lightning==2.0.5
 torchmetrics>=1.2.0
 
 wandb==0.21.1
-

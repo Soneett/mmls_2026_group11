@@ -3,6 +3,15 @@ import torch
 
 from ..graph.graph_compose import compute_z_from_edges
 from ..dataset.preprocessing import select_last_event_per_user
+from .distillation import BranchOutputs, logits_from_embeddings
+
+
+def _empty_metrics(eval_branches):
+    metrics = {}
+    for branch in eval_branches:
+        metrics[f"ndcg_{branch}"] = 0.0
+        metrics[f"coverage_{branch}"] = 0.0
+    return metrics
 
 
 @torch.no_grad()
@@ -14,6 +23,7 @@ def compute_eval_batch_stats(
     graph_meta,
     k,
     device,
+    eval_branches=("big", "small"),
 ):
     if len(batch.events) == 0:
         return None
@@ -27,6 +37,7 @@ def compute_eval_batch_stats(
         node_emb=node_emb,
         device=device,
     )
+    branch_outputs = BranchOutputs(z_big=z_big, z_small=z_small)
 
     batch_targets = select_last_event_per_user(batch.events)
     if len(batch_targets) == 0:
@@ -51,72 +62,48 @@ def compute_eval_batch_stats(
         device=device,
     )
 
-    logits_big = z_big[users] @ z_big[item_ids_global].t()
-    logits_small = z_small[users] @ z_small[item_ids_global].t()
+    stats = {"n_users": int(users.numel())}
+    k = min(k, graph_meta.num_items)
 
-    topk_big = torch.topk(logits_big, k=k, dim=1).indices
-    topk_small = torch.topk(logits_small, k=k, dim=1).indices
+    for branch in eval_branches:
+        z = branch_outputs.select(branch)
+        logits = logits_from_embeddings(z, users, item_ids_global)
+        topk = torch.topk(logits, k=k, dim=1).indices
 
-    ndcg_big_sum = 0.0
-    ndcg_small_sum = 0.0
+        ndcg_sum = 0.0
+        topk_union = set()
 
-    topk_union_big = set()
-    topk_union_small = set()
+        for i in range(len(users)):
+            pos = pos_items[i]
+            hits = (topk[i] == pos).nonzero(as_tuple=False)
+            if hits.numel() > 0:
+                rank = hits[0].item()
+                ndcg_sum += 1.0 / math.log2(rank + 2)
+            topk_union.update(topk[i].detach().cpu().tolist())
 
-    for i in range(len(users)):
-        pos = pos_items[i]
+        stats[f"ndcg_{branch}_sum"] = ndcg_sum
+        stats[f"topk_union_{branch}"] = topk_union
 
-        hits_big = (topk_big[i] == pos).nonzero(as_tuple=False)
-        if hits_big.numel() > 0:
-            rank_big = hits_big[0].item()
-            ndcg_big_sum += 1.0 / math.log2(rank_big + 2)
-
-        hits_small = (topk_small[i] == pos).nonzero(as_tuple=False)
-        if hits_small.numel() > 0:
-            rank_small = hits_small[0].item()
-            ndcg_small_sum += 1.0 / math.log2(rank_small + 2)
-
-        topk_union_big.update(topk_big[i].detach().cpu().tolist())
-        topk_union_small.update(topk_small[i].detach().cpu().tolist())
-
-    return {
-        "ndcg_big_sum": ndcg_big_sum,
-        "ndcg_small_sum": ndcg_small_sum,
-        "n_users": int(users.numel()),
-        "topk_union_big": topk_union_big,
-        "topk_union_small": topk_union_small,
-    }
+    return stats
 
 
-def aggregate_eval_stats(outputs, num_items: int):
+def aggregate_eval_stats(outputs, num_items: int, eval_branches=("big", "small")):
     if len(outputs) == 0:
-        return {
-            "ndcg_big": 0.0,
-            "ndcg_small": 0.0,
-            "coverage_big": 0.0,
-            "coverage_small": 0.0,
-        }
+        return _empty_metrics(eval_branches)
 
-    total_ndcg_big = 0.0
-    total_ndcg_small = 0.0
-    total_users = 0
-
-    topk_union_big = set()
-    topk_union_small = set()
-
-    for out in outputs:
-        total_ndcg_big += out["ndcg_big_sum"]
-        total_ndcg_small += out["ndcg_small_sum"]
-        total_users += out["n_users"]
-
-        topk_union_big.update(out["topk_union_big"])
-        topk_union_small.update(out["topk_union_small"])
-
+    total_users = sum(out["n_users"] for out in outputs)
     denom = max(total_users, 1)
+    metrics = {}
 
-    return {
-        "ndcg_big": total_ndcg_big / denom,
-        "ndcg_small": total_ndcg_small / denom,
-        "coverage_big": len(topk_union_big) / num_items,
-        "coverage_small": len(topk_union_small) / num_items,
-    }
+    for branch in eval_branches:
+        total_ndcg = 0.0
+        topk_union = set()
+
+        for out in outputs:
+            total_ndcg += out.get(f"ndcg_{branch}_sum", 0.0)
+            topk_union.update(out.get(f"topk_union_{branch}", set()))
+
+        metrics[f"ndcg_{branch}"] = total_ndcg / denom
+        metrics[f"coverage_{branch}"] = len(topk_union) / num_items
+
+    return metrics
