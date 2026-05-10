@@ -1,0 +1,51 @@
+ml100k_path: "data/ml100k_ratings.csv"
+sep: ";"
+snapshot_gran: "d"
+window_sids: 0
+
+node_dim: 64
+embed_dim: 64
+compressed_dim: 16
+
+n_layers: 2
+dropout: 0.1
+
+lr: 0.0003
+weight_decay: 0.00001
+epochs: 1
+
+train_ratio: 0.7
+val_ratio: 0.15
+test_ratio: 0.15
+
+k: 20
+seed: 1337
+device: "cpu"
+
+debug_sids: 3
+full_train_epochs: 1
+
+distillation_mode: "joint"
+distillation_weight: 0.1
+lambda_kd: 0.0
+kd_temperature: 1.0
+lambda_emb: 0.0
+teacher_checkpoint: ""
+teacher_config: ""
+grad_clip: 1.0
+precision: "32-true"
+
+use_scheduler: false
+use_grad_checkpointing: false
+parallel_mode: "none"
+devices: 1
+grad_accum_steps: 1
+users_per_batch: 0
+
+project: "dynamic_gnn_recommender_movielens"
+run_name: "bench_student_blockwise"
+checkpoint_dir: "checkpoints"
+
+use_blockwise_scoring: true
+use_dynamic_int8: false
+use_fake_quant: false

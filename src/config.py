@@ -33,15 +33,15 @@ class CFG:
     debug_sids: int = 3
     full_train_epochs: int = 30
 
-    distillation_mode: str
-    distillation_weight: float
-    lambda_kd: float
-    kd_temperature: float
-    lambda_emb: float
-    teacher_checkpoint: str
-    teacher_config: str
-    grad_clip: float
-    precision: str
+    distillation_mode: str = "joint"
+    distillation_weight: float = 0.1
+    lambda_kd: float = 0.0
+    kd_temperature: float = 1.0
+    lambda_emb: float = 0.0
+    teacher_checkpoint: str = ""
+    teacher_config: str = ""
+    grad_clip: float = 1.0
+    precision: str = "32-true"
 
     use_scheduler: bool = False
     use_grad_checkpointing: bool = False
@@ -60,6 +60,11 @@ class CFG:
     zero_offload_optimizer: bool = False
     zero_offload_optimizer_device: str = "cpu"
 
+    # benchmark flags
+    use_blockwise_scoring: bool = True
+    use_dynamic_int8: bool = True
+    use_fake_quant: bool = False
+
 
 def load_config(path: str) -> CFG:
     with open(path, "r", encoding="utf-8") as f:
@@ -74,6 +79,9 @@ def load_config(path: str) -> CFG:
         "teacher_checkpoint": "",
         "teacher_config": "",
         "precision": "32-true",
+        "use_blockwise_scoring": True,
+        "use_dynamic_int8": True,
+        "use_fake_quant": False,
     }
     for key, value in defaults.items():
         data.setdefault(key, value)

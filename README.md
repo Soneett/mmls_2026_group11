@@ -242,3 +242,50 @@ WANDB_ENTITY=your_wandb_entity
 docker-compose up --build
 ```
 Docker автоматически подгрузит переменные из .env.
+
+## CPU-бенчмарки сжатия (latency / throughput / peak memory / model size)
+
+Добавлен скрипт `src/benchmark_compression.py`, который считает метрики для двух вариантов студента на CPU:
+
+- `student_fp32`
+- `student_int8`
+
+Собираемые метрики:
+
+- `latency_sec`
+- `throughput_users_per_sec`
+- `peak_memory_mb`
+- `model_size_mb`
+
+Пример запуска:
+
+```bash
+python -m src.benchmark_compression \
+  --config configs/bench_student_fp32.yaml \
+  --checkpoint checkpoints/student/best.ckpt \
+  --output artifacts/compression_metrics.json
+```
+
+Для экспериментов по методам сжатия добавлены отдельные конфиги:
+
+- `configs/bench_student_fp32.yaml`
+- `configs/bench_student_int8.yaml`
+- `configs/bench_student_kd.yaml`
+- `configs/bench_student_blockwise.yaml`
+
+
+Флаги в benchmark-конфигах:
+
+- `use_blockwise_scoring`
+- `use_dynamic_int8`
+- `use_fake_quant`
+
+Пайплайн бенчмарка поддерживает отдельные пути: `fp32`, `fake_quant`, `dynamic_int8`, `blockwise`.
+Также в отчёт добавляются агрегаты:
+
+- `fp32_latency_ms`
+- `int8_latency_ms`
+- `blockwise_latency_ms`
+- `speedup_int8`
+- `speedup_blockwise`
+- `quality_drop_pct_vs_teacher`
