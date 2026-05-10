@@ -49,6 +49,7 @@ def main():
         deterministic=True,
         gradient_clip_val=cfg.grad_clip,
         log_every_n_steps=1,
+        precision=getattr(cfg, "precision", "32-true"),
     )
 
     trainer.fit(model, datamodule=dm)

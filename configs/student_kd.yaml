@@ -26,13 +26,13 @@ device: "cpu"
 debug_sids: 3
 full_train_epochs: 30
 
-distillation_mode: "joint"
-distillation_weight: 0.1
-lambda_kd: 0.0
-kd_temperature: 1.0
+distillation_mode: "offline_kd"
+distillation_weight: 0.0
+lambda_kd: 0.5
+kd_temperature: 2.0
 lambda_emb: 0.0
-teacher_checkpoint: ""
-teacher_config: ""
+teacher_checkpoint: "checkpoints/teacher_gcn_L4_emb128_comp32/best.ckpt"
+teacher_config: "configs/teacher.yaml"
 grad_clip: 1.0
 precision: "32-true"
 
@@ -40,5 +40,5 @@ use_scheduler: false
 use_grad_checkpointing: false
 
 project: "dynamic_gnn_recommender_movielens"
-run_name: "gcn_L2_emb64_comp16"
+run_name: "student_kd_gcn_L2_emb64_comp16"
 checkpoint_dir: "checkpoints"
