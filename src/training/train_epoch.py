@@ -3,6 +3,7 @@ import torch.nn.functional as F
 import torch.distributed as dist
 
 from ..graph.graph_compose import compute_z_from_edges
+from ..dataset.preprocessing import select_last_event_per_user
 
 
 def _is_dist():
@@ -39,7 +40,7 @@ def compute_train_batch_loss(
         device=device,
     )
 
-    batch_targets = batch.events
+    batch_targets = select_last_event_per_user(batch.events)
     local_user_count = int(len(batch_targets))
 
     world_size = dist.get_world_size() if _is_dist() else 1
