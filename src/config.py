@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 import yaml
 
@@ -65,6 +65,10 @@ class CFG:
     use_dynamic_int8: bool = True
     use_fake_quant: bool = False
 
+    # optional benchmark config knobs (used by benchmark script / external configs)
+    benchmark_block_size: int = 1024
+    benchmark_repeats: int = 20
+    benchmark_warmup: int = 5
 
 def load_config(path: str) -> CFG:
     with open(path, "r", encoding="utf-8") as f:
@@ -85,4 +89,7 @@ def load_config(path: str) -> CFG:
     }
     for key, value in defaults.items():
         data.setdefault(key, value)
-    return CFG(**data)
+
+    valid_keys = {f.name for f in fields(CFG)}
+    filtered = {k: v for k, v in data.items() if k in valid_keys}
+    return CFG(**filtered)

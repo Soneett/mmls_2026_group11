@@ -13,7 +13,11 @@ from src.dataset.preprocessing import load_raw_ratings, normalize_and_index_ids
 from src.dataset.temporal_dataset import build_temporal_graph_dataset
 from src.inference.blockwise_scoring import blockwise_topk_dot_product
 from src.lightning.model import TemporalLightningModule
-from src.quantization.dynamic_int8 import apply_dynamic_int8_quantization, prepare_model_for_dynamic_int8
+from src.quantization.dynamic_int8 import (
+    apply_dynamic_int8_quantization,
+    count_dynamic_quantized_linear_layers,
+    prepare_model_for_dynamic_int8,
+)
 from src.quantization.fake_quant import replace_linear_with_fake_quant
 
 
@@ -103,9 +107,14 @@ def _benchmark_variant(name, model, users, item_ids, k, repeats, warmup, block_s
             max_rss = max(max_rss, process.memory_info().rss)
 
     mean_latency_s = float(sum(latencies) / len(latencies))
+    sorted_latencies = sorted(latencies)
+    p50_latency_s = float(sorted_latencies[int(0.50 * (len(sorted_latencies) - 1))])
+    p95_latency_s = float(sorted_latencies[int(0.95 * (len(sorted_latencies) - 1))])
     return {
         "variant": name,
         "latency_ms": mean_latency_s * 1000.0,
+        "p50_latency_ms": p50_latency_s * 1000.0,
+        "p95_latency_ms": p95_latency_s * 1000.0,
         "throughput_users_per_sec": float(users.shape[0] / mean_latency_s),
         "peak_memory_mb": (max_rss - rss_baseline) / (1024 ** 2),
         "model_size_mb": _model_state_size_mb(model),
@@ -150,17 +159,36 @@ def _log_to_wandb(cfg, metrics: dict):
     except ImportError:
         return
 
-    run = wandb.init(project=cfg.project, name=f"{cfg.run_name}_benchmark", config=metrics.get("config_flags", {}), reinit=True)
-    flat = {}
+    run = wandb.init(
+        project=cfg.project,
+        name=f"{cfg.run_name}_benchmark",
+        config={
+            **metrics.get("config_flags", {}),
+            "config": metrics.get("config"),
+            "checkpoint": metrics.get("checkpoint"),
+            "device": metrics.get("device"),
+        },
+        reinit=True,
+    )
+
+    flat = {
+        "fp32_latency_ms": metrics.get("fp32_latency_ms"),
+        "int8_latency_ms": metrics.get("int8_latency_ms"),
+        "blockwise_latency_ms": metrics.get("blockwise_latency_ms"),
+        "speedup_int8": metrics.get("speedup_int8"),
+        "speedup_blockwise": metrics.get("speedup_blockwise"),
+        "ndcg_drop_pct": metrics.get("ndcg_drop_pct"),
+    }
+
     for row in metrics["results"]:
         prefix = row["variant"]
-        flat[f"{prefix}/latency_ms"] = row["latency_ms"]
-        flat[f"{prefix}/throughput_users_per_sec"] = row["throughput_users_per_sec"]
-        flat[f"{prefix}/peak_memory_mb"] = row["peak_memory_mb"]
-        flat[f"{prefix}/model_size_mb"] = row["model_size_mb"]
-    if metrics.get("quality_drop_pct_vs_teacher") is not None:
-        flat["quality_drop_pct_vs_teacher"] = metrics["quality_drop_pct_vs_teacher"]
+        for key, value in row.items():
+            if key == "variant":
+                continue
+            flat[f"{prefix}/{key}"] = value
+
     wandb.log(flat)
+    wandb.log({"benchmark/results": wandb.Table(data=metrics["results"])})
     run.finish()
 
 
@@ -203,8 +231,23 @@ def main():
         else:
             int8_model.encoder = apply_dynamic_int8_quantization(int8_model.encoder, inplace=False)
             int8_model.compressor = apply_dynamic_int8_quantization(int8_model.compressor, inplace=False)
+
+        quantized_layers = count_dynamic_quantized_linear_layers(int8_model.encoder) + count_dynamic_quantized_linear_layers(int8_model.compressor)
         int8_model.to("cpu")
-        rows.append(_benchmark_variant("dynamic_int8", int8_model, users.cpu(), item_ids.cpu(), args.k, args.repeats, args.warmup, args.block_size, True, torch.device("cpu")))
+        int8_row = _benchmark_variant(
+            "dynamic_int8",
+            int8_model,
+            users.cpu(),
+            item_ids.cpu(),
+            args.k,
+            args.repeats,
+            args.warmup,
+            args.block_size,
+            True,
+            torch.device("cpu"),
+        )
+        int8_row["dynamic_quantized_linear_layers"] = quantized_layers
+        rows.append(int8_row)
 
     fp32_latency = next((r["latency_ms"] for r in rows if r["variant"] == "fp32"), None)
     int8_latency = next((r["latency_ms"] for r in rows if r["variant"] == "dynamic_int8"), None)
@@ -220,13 +263,22 @@ def main():
         "blockwise_latency_ms": blockwise_latency,
         "speedup_int8": (fp32_latency / int8_latency) if fp32_latency and int8_latency else None,
         "speedup_blockwise": (fp32_latency / blockwise_latency) if fp32_latency and blockwise_latency else None,
-        "quality_drop_pct_vs_teacher": _maybe_teacher_quality_drop(cfg, dataset, model, users, item_ids, args.k, args.block_size, device),
+        "compression_ratio_int8": None,
+        "compression_ratio_fake_quant": None,
+        "ndcg_drop_pct": _maybe_teacher_quality_drop(cfg, dataset, model, users, item_ids, args.k, args.block_size, device),
         "config_flags": {
             "use_blockwise_scoring": bool(getattr(cfg, "use_blockwise_scoring", True)),
             "use_dynamic_int8": bool(getattr(cfg, "use_dynamic_int8", True)),
             "use_fake_quant": bool(getattr(cfg, "use_fake_quant", False)),
         },
     }
+
+
+    fp32_size = next((r["model_size_mb"] for r in rows if r["variant"] == "fp32"), None)
+    int8_size = next((r["model_size_mb"] for r in rows if r["variant"] == "dynamic_int8"), None)
+    fq_size = next((r["model_size_mb"] for r in rows if r["variant"] == "fake_quant"), None)
+    metrics["compression_ratio_int8"] = (fp32_size / int8_size) if fp32_size and int8_size else None
+    metrics["compression_ratio_fake_quant"] = (fp32_size / fq_size) if fp32_size and fq_size else None
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
