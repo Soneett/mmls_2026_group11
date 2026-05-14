@@ -10,6 +10,7 @@ import torch
 
 from src.config import load_config
 from src.dataset.temporal_dataset import build_temporal_graph_dataset
+from src.graph.graph_compose import build_norm_adj, concat_edges
 from src.inference.blockwise_scoring import blockwise_topk_dot_product
 from src.lightning.model import TemporalLightningModule
 from src.quantization.dynamic_int8 import (
@@ -83,19 +84,18 @@ def _score_topk(users_z, items_z, k: int, use_blockwise: bool, block_size: int):
     return topk.values, topk.indices
 
 
-def _benchmark_variant(name, model, users, item_ids, k, repeats, warmup, block_size, use_blockwise, device):
+def _benchmark_variant(name, model, users, item_ids, A_norm, k, repeats, warmup, block_size, use_blockwise, device):
     node_emb = model.node_emb
     encoder = model.encoder
     compressor = model.compressor
 
-    x = node_emb.weight
     process = psutil.Process()
     rss_baseline = process.memory_info().rss
     max_rss = rss_baseline
 
     with torch.inference_mode():
         for _ in range(warmup):
-            z_big = encoder(model.graph_meta.A_norm, x)
+            z_big = encoder(A_norm, node_emb.weight)
             z_small = compressor(z_big)
             users_z = z_small[users]
             items_z = z_small[item_ids]
@@ -105,7 +105,7 @@ def _benchmark_variant(name, model, users, item_ids, k, repeats, warmup, block_s
         for _ in range(repeats):
             _sync_if_cuda(device)
             start = time.perf_counter()
-            z_big = encoder(model.graph_meta.A_norm, x)
+            z_big = encoder(A_norm, node_emb.weight)
             z_small = compressor(z_big)
             users_z = z_small[users]
             items_z = z_small[item_ids]
@@ -131,7 +131,7 @@ def _benchmark_variant(name, model, users, item_ids, k, repeats, warmup, block_s
     }
 
 
-def _maybe_teacher_quality_drop(cfg, dataset, student_model, users, item_ids, k, block_size, device):
+def _maybe_teacher_quality_drop(cfg, dataset, student_model, users, item_ids, A_norm, k, block_size, device):
     if not getattr(cfg, "teacher_checkpoint", ""):
         return None
     teacher_cfg_path = getattr(cfg, "teacher_config", "")
@@ -150,18 +150,8 @@ def _maybe_teacher_quality_drop(cfg, dataset, student_model, users, item_ids, k,
     teacher_model.eval().to(device)
 
     with torch.inference_mode():
-        ts = teacher_model.compressor(
-            teacher_model.encoder(
-                teacher_model.graph_meta.A_norm,
-                teacher_model.node_emb.weight,
-            )
-        )
-        ss = student_model.compressor(
-            student_model.encoder(
-                student_model.graph_meta.A_norm,
-                student_model.node_emb.weight,
-            )
-        )
+        ts = teacher_model.compressor(teacher_model.encoder(A_norm, teacher_model.node_emb.weight))
+        ss = student_model.compressor(student_model.encoder(A_norm, student_model.node_emb.weight))
         t_scores, _ = _score_topk(ts[users], ts[item_ids], k=k, use_blockwise=True, block_size=block_size)
         s_scores, _ = _score_topk(ss[users], ss[item_ids], k=k, use_blockwise=True, block_size=block_size)
         t_mean = t_scores.mean().item()
@@ -207,7 +197,24 @@ def _log_to_wandb(cfg, metrics: dict):
             flat[f"{prefix}/{key}"] = value
 
     wandb.log(flat)
-    wandb.log({"benchmark/results": wandb.Table(data=metrics["results"])})
+    columns = sorted({
+        key
+        for row in metrics["results"]
+        for key in row.keys()
+    })
+
+    table_data = [
+        [row.get(col) for col in columns]
+        for row in metrics["results"]
+    ]
+
+    table = wandb.Table(
+        columns=columns,
+        data=table_data,
+    )
+    
+
+    wandb.log({"benchmark/results": table})
     run.finish()
 
 
@@ -227,18 +234,27 @@ def main():
     model, dataset, device = _load_model(cfg, args.checkpoint or None)
     users, item_ids = _prepare_eval_batch(cfg, dataset, users_limit=args.users_limit, device=device)
 
+    edge_list = []
+    for sid in sorted(dataset.mp_by_sid.keys()):
+        df = dataset.mp_by_sid[sid]
+        src = torch.tensor(df["from"].to_numpy(), dtype=torch.long, device=device)
+        dst = torch.tensor(df["to"].to_numpy(), dtype=torch.long, device=device)
+        edge_list.append((src, dst))
+    edge_src, edge_dst = concat_edges(edge_list)
+    A_norm = build_norm_adj(edge_src=edge_src, edge_dst=edge_dst, num_nodes=dataset.num_nodes, device=device)
+
     rows = []
     fp32_base = copy.deepcopy(model)
-    rows.append(_benchmark_variant("fp32", fp32_base, users, item_ids, args.k, args.repeats, args.warmup, args.block_size, False, device))
+    rows.append(_benchmark_variant("fp32", fp32_base, users, item_ids, A_norm, args.k, args.repeats, args.warmup, args.block_size, False, device))
 
     if getattr(cfg, "use_blockwise_scoring", True):
-        rows.append(_benchmark_variant("blockwise", copy.deepcopy(model), users, item_ids, args.k, args.repeats, args.warmup, args.block_size, True, device))
+        rows.append(_benchmark_variant("blockwise", copy.deepcopy(model), users, item_ids, A_norm, args.k, args.repeats, args.warmup, args.block_size, True, device))
 
     if getattr(cfg, "use_fake_quant", False):
         fq_model = copy.deepcopy(model)
         fq_model.encoder = replace_linear_with_fake_quant(fq_model.encoder, inplace=False)
         fq_model.compressor = replace_linear_with_fake_quant(fq_model.compressor, inplace=False)
-        rows.append(_benchmark_variant("fake_quant", fq_model, users, item_ids, args.k, args.repeats, args.warmup, args.block_size, True, device))
+        rows.append(_benchmark_variant("fake_quant", fq_model, users, item_ids, A_norm, args.k, args.repeats, args.warmup, args.block_size, True, device))
 
     if getattr(cfg, "use_dynamic_int8", True):
         int8_model = copy.deepcopy(model)
@@ -258,6 +274,7 @@ def main():
             int8_model,
             users.cpu(),
             item_ids.cpu(),
+            A_norm.cpu(),
             args.k,
             args.repeats,
             args.warmup,
@@ -284,7 +301,7 @@ def main():
         "speedup_blockwise": (fp32_latency / blockwise_latency) if fp32_latency and blockwise_latency else None,
         "compression_ratio_int8": None,
         "compression_ratio_fake_quant": None,
-        "ndcg_drop_pct": _maybe_teacher_quality_drop(cfg, dataset, model, users, item_ids, args.k, args.block_size, device),
+        "ndcg_drop_pct": _maybe_teacher_quality_drop(cfg, dataset, model, users, item_ids, A_norm, args.k, args.block_size, device),
         "config_flags": {
             "use_blockwise_scoring": bool(getattr(cfg, "use_blockwise_scoring", True)),
             "use_dynamic_int8": bool(getattr(cfg, "use_dynamic_int8", True)),
