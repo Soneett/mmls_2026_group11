@@ -33,6 +33,7 @@ kd_temperature: 2.0
 lambda_emb: 0.0
 teacher_checkpoint: "checkpoints/teacher_gcn_L4_emb128_comp32/best.ckpt"
 teacher_config: "configs/teacher.yaml"
+teacher_embeddings_path: "artifacts/teacher_embeddings.pt"
 grad_clip: 1.0
 precision: "32-true"
 

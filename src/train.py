@@ -85,31 +85,49 @@ def _run_benchmark_if_possible(cfg, best_ckpt: str, output_json: Path) -> dict |
 
 
 def _log_benchmark_to_wandb(logger: WandbLogger | None, bench_metrics: dict | None):
+
     if logger is None or bench_metrics is None:
         return
+
     exp = logger.experiment
-    results = bench_metrics.get("results", []) if isinstance(bench_metrics, dict) else []
+
     history_payload = {}
-    for row in results:
-        variant = row.get("variant", "unknown")
-        for k, v in row.items():
-            if k == "variant":
-                continue
-            history_payload[f"benchmark/{variant}/{k}"] = v
-    for key in (
-        "fp32_latency_ms",
-        "int8_latency_ms",
-        "blockwise_latency_ms",
-        "speedup_int8",
-        "speedup_blockwise",
-        "quality_drop_pct_vs_teacher",
-    ):
-        if key in bench_metrics:
-            history_payload[f"benchmark/{key}"] = bench_metrics[key]
+
+    # log all top-level numeric metrics
+    for k, v in bench_metrics.items():
+
+        if isinstance(v, (int, float)):
+            history_payload[f"benchmark/{k}"] = v
+
+    # log nested per-variant results
+    results = bench_metrics.get("results", [])
+
+    if isinstance(results, list):
+
+        for row in results:
+
+            variant = row.get("variant", "unknown")
+
+            for k, v in row.items():
+
+                if k == "variant":
+                    continue
+
+                if isinstance(v, (int, float)):
+                    history_payload[f"benchmark/{variant}/{k}"] = v
+
+    print("=" * 80)
+    print("WANDB BENCH PAYLOAD")
+    print("=" * 80)
+    print(history_payload)
+
     if history_payload:
+
         exp.log(history_payload)
+
         exp.summary.update(history_payload)
 
+        exp.finish()
 
 def _export_artifacts(cfg, cfg_path: str, best_ckpt: str | None, bench_json: Path | None, logger: WandbLogger | None):
     root = Path("export_artifacts")
@@ -185,7 +203,9 @@ def main():
         deterministic=True,
         gradient_clip_val=cfg.grad_clip,
         accumulate_grad_batches=max(1, int(getattr(cfg, "grad_accum_steps", 1))),
-        log_every_n_steps=1,
+        log_every_n_steps=int(
+            getattr(cfg, "log_every_n_steps", 50)
+        ),
         precision=getattr(cfg, "precision", "32-true"),
     )
 

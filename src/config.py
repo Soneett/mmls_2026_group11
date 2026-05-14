@@ -40,6 +40,7 @@ class CFG:
     lambda_emb: float = 0.0
     teacher_checkpoint: str = ""
     teacher_config: str = ""
+    teacher_embeddings_path: str = ""
     grad_clip: float = 1.0
     precision: str = "32-true"
 
@@ -82,6 +83,7 @@ def load_config(path: str) -> CFG:
         "lambda_emb": 0.0,
         "teacher_checkpoint": "",
         "teacher_config": "",
+        "teacher_embeddings_path": "",
         "precision": "32-true",
         "use_blockwise_scoring": True,
         "use_dynamic_int8": True,

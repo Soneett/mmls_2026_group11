@@ -24,7 +24,7 @@ def compute_train_batch_loss(
     distillation_weight,
     lambda_kd,
     kd_temperature,
-    teacher_outputs,
+    teacher_z_small,
     device,
 ):
     prefix_src = batch.prefix_src.to(device, non_blocking=True)
@@ -97,12 +97,11 @@ def compute_train_batch_loss(
         )
 
         if distillation_mode == "offline_kd":
-            if teacher_outputs is None:
-                raise ValueError(
-                    "teacher_outputs must be provided for offline_kd mode"
-                )
-
-            teacher_logits = teacher_outputs["logits"].detach().float()
+            if teacher_z_small is None:
+                raise ValueError("teacher_z_small must be provided for offline_kd mode")
+            teacher_users_z_small = teacher_z_small[users]
+            teacher_items_z_small = teacher_z_small[item_ids_global]
+            teacher_logits = (teacher_users_z_small @ teacher_items_z_small.t()).detach().float()
             student_logits = logits_small.float()
 
             temperature = max(float(kd_temperature), 1e-8)

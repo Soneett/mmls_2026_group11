@@ -33,6 +33,7 @@ kd_temperature: 1.0
 lambda_emb: 0.0
 teacher_checkpoint: ""
 teacher_config: ""
+teacher_embeddings_path: ""
 grad_clip: 1.0
 precision: "32-true"
 

@@ -9,7 +9,6 @@ import psutil
 import torch
 
 from src.config import load_config
-from src.dataset.preprocessing import load_raw_ratings, normalize_and_index_ids
 from src.dataset.temporal_dataset import build_temporal_graph_dataset
 from src.inference.blockwise_scoring import blockwise_topk_dot_product
 from src.lightning.model import TemporalLightningModule
@@ -59,10 +58,20 @@ def _load_model(cfg, checkpoint_path: str | None):
 
 
 def _prepare_eval_batch(cfg, dataset, users_limit: int, device: torch.device):
-    raw = load_raw_ratings(cfg.ml100k_path, sep=cfg.sep)
-    df, _, _, _ = normalize_and_index_ids(raw)
-    users = torch.tensor(df["from"].drop_duplicates().head(users_limit).to_numpy(), dtype=torch.long, device=device)
-    item_ids_global = torch.arange(dataset.item_offset, dataset.item_offset + dataset.num_items, dtype=torch.long, device=device)
+
+    users = torch.arange(
+        min(users_limit, dataset.num_users),
+        dtype=torch.long,
+        device=device,
+    )
+
+    item_ids_global = torch.arange(
+        dataset.item_offset,
+        dataset.item_offset + dataset.num_items,
+        dtype=torch.long,
+        device=device,
+    )
+
     return users, item_ids_global
 
 
@@ -86,7 +95,7 @@ def _benchmark_variant(name, model, users, item_ids, k, repeats, warmup, block_s
 
     with torch.inference_mode():
         for _ in range(warmup):
-            z_big = encoder(x)
+            z_big = encoder(model.graph_meta.A_norm, x)
             z_small = compressor(z_big)
             users_z = z_small[users]
             items_z = z_small[item_ids]
@@ -96,7 +105,7 @@ def _benchmark_variant(name, model, users, item_ids, k, repeats, warmup, block_s
         for _ in range(repeats):
             _sync_if_cuda(device)
             start = time.perf_counter()
-            z_big = encoder(x)
+            z_big = encoder(model.graph_meta.A_norm, x)
             z_small = compressor(z_big)
             users_z = z_small[users]
             items_z = z_small[item_ids]
@@ -141,8 +150,18 @@ def _maybe_teacher_quality_drop(cfg, dataset, student_model, users, item_ids, k,
     teacher_model.eval().to(device)
 
     with torch.inference_mode():
-        ts = teacher_model.compressor(teacher_model.encoder(teacher_model.node_emb.weight))
-        ss = student_model.compressor(student_model.encoder(student_model.node_emb.weight))
+        ts = teacher_model.compressor(
+            teacher_model.encoder(
+                teacher_model.graph_meta.A_norm,
+                teacher_model.node_emb.weight,
+            )
+        )
+        ss = student_model.compressor(
+            student_model.encoder(
+                student_model.graph_meta.A_norm,
+                student_model.node_emb.weight,
+            )
+        )
         t_scores, _ = _score_topk(ts[users], ts[item_ids], k=k, use_blockwise=True, block_size=block_size)
         s_scores, _ = _score_topk(ss[users], ss[item_ids], k=k, use_blockwise=True, block_size=block_size)
         t_mean = t_scores.mean().item()

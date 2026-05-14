@@ -23,12 +23,13 @@ def build_norm_adj(
     num_nodes: int,
     device: torch.device,
 ) -> torch.Tensor:
+    device = edge_src.device
     self_idx = torch.arange(num_nodes, dtype=torch.long, device=device)
 
     src = torch.cat([edge_src, self_idx], dim=0)
     dst = torch.cat([edge_dst, self_idx], dim=0)
 
-    deg = torch.bincount(src, minlength=num_nodes).float()
+    deg = torch.bincount(src, minlength=num_nodes).to(device=device, dtype=torch.float32)
     deg_inv_sqrt = torch.pow(deg.clamp(min=1.0), -0.5)
 
     vals = deg_inv_sqrt[src] * deg_inv_sqrt[dst]
