@@ -94,26 +94,38 @@ def _benchmark_variant(name, model, users, item_ids, A_norm, k, repeats, warmup,
     max_rss = rss_baseline
 
     with torch.inference_mode():
+        z_big = encoder(A_norm, node_emb.weight)
+        z_small = compressor(z_big)
+        users_z = z_small[users]
+        items_z = z_small[item_ids]
+
         for _ in range(warmup):
-            z_big = encoder(A_norm, node_emb.weight)
-            z_small = compressor(z_big)
-            users_z = z_small[users]
-            items_z = z_small[item_ids]
-            _ = _score_topk(users_z, items_z, k=k, use_blockwise=use_blockwise, block_size=block_size)
+            _ = _score_topk(
+                users_z,
+                items_z,
+                k=k,
+                use_blockwise=use_blockwise,
+                block_size=block_size,
+            )
 
         latencies = []
         for _ in range(repeats):
             _sync_if_cuda(device)
             start = time.perf_counter()
-            z_big = encoder(A_norm, node_emb.weight)
-            z_small = compressor(z_big)
-            users_z = z_small[users]
-            items_z = z_small[item_ids]
-            _ = _score_topk(users_z, items_z, k=k, use_blockwise=use_blockwise, block_size=block_size)
+            _ = _score_topk(
+                users_z,
+                items_z,
+                k=k,
+                use_blockwise=use_blockwise,
+                block_size=block_size,
+            )
             _sync_if_cuda(device)
             end = time.perf_counter()
             latencies.append(end - start)
-            max_rss = max(max_rss, process.memory_info().rss)
+            max_rss = max(
+                max_rss,
+                process.memory_info().rss,
+            )
 
     mean_latency_s = float(sum(latencies) / len(latencies))
     sorted_latencies = sorted(latencies)
@@ -244,11 +256,15 @@ def main():
     A_norm = build_norm_adj(edge_src=edge_src, edge_dst=edge_dst, num_nodes=dataset.num_nodes, device=device)
 
     rows = []
-    fp32_base = copy.deepcopy(model)
-    rows.append(_benchmark_variant("fp32", fp32_base, users, item_ids, A_norm, args.k, args.repeats, args.warmup, args.block_size, False, device))
+
+    fp32_gpu_model = copy.deepcopy(model).to(device)
+    rows.append(_benchmark_variant("fp32_gpu", fp32_gpu_model, users, item_ids, A_norm, args.k, args.repeats, args.warmup, args.block_size, False, device))
+
+    fp32_cpu_model = copy.deepcopy(model).cpu().eval()
+    rows.append(_benchmark_variant("fp32_cpu", fp32_cpu_model, users.cpu(), item_ids.cpu(), A_norm.cpu(), args.k, args.repeats, args.warmup, args.block_size, False, torch.device("cpu")))
 
     if getattr(cfg, "use_blockwise_scoring", True):
-        rows.append(_benchmark_variant("blockwise", copy.deepcopy(model), users, item_ids, A_norm, args.k, args.repeats, args.warmup, args.block_size, True, device))
+        rows.append(_benchmark_variant("blockwise_gpu", copy.deepcopy(model).to(device).eval(), users, item_ids, A_norm, args.k, args.repeats, args.warmup, args.block_size, True, device))
 
     if getattr(cfg, "use_fake_quant", False):
         fq_model = copy.deepcopy(model)
@@ -268,9 +284,9 @@ def main():
             int8_model.compressor = apply_dynamic_int8_quantization(int8_model.compressor, inplace=False)
 
         quantized_layers = count_dynamic_quantized_linear_layers(int8_model.encoder) + count_dynamic_quantized_linear_layers(int8_model.compressor)
-        int8_model.to("cpu")
+        int8_model = int8_model.cpu().eval()
         int8_row = _benchmark_variant(
-            "dynamic_int8",
+            "dynamic_int8_cpu",
             int8_model,
             users.cpu(),
             item_ids.cpu(),
@@ -285,20 +301,23 @@ def main():
         int8_row["dynamic_quantized_linear_layers"] = quantized_layers
         rows.append(int8_row)
 
-    fp32_latency = next((r["latency_ms"] for r in rows if r["variant"] == "fp32"), None)
-    int8_latency = next((r["latency_ms"] for r in rows if r["variant"] == "dynamic_int8"), None)
-    blockwise_latency = next((r["latency_ms"] for r in rows if r["variant"] == "blockwise"), None)
+    fp32_gpu_latency = next((r["latency_ms"] for r in rows if r["variant"] == "fp32_gpu"), None)
+    fp32_cpu_latency = next((r["latency_ms"] for r in rows if r["variant"] == "fp32_cpu"), None)
+    int8_latency = next((r["latency_ms"] for r in rows if r["variant"] == "dynamic_int8_cpu"), None)
+    blockwise_latency = next((r["latency_ms"] for r in rows if r["variant"] == "blockwise_gpu"), None)
 
     metrics = {
         "config": args.config,
         "checkpoint": args.checkpoint,
         "device": str(device),
         "results": rows,
-        "fp32_latency_ms": fp32_latency,
+        "fp32_latency_ms": fp32_gpu_latency,
+        "fp32_gpu_latency_ms": fp32_gpu_latency,
+        "fp32_cpu_latency_ms": fp32_cpu_latency,
         "int8_latency_ms": int8_latency,
         "blockwise_latency_ms": blockwise_latency,
-        "speedup_int8": (fp32_latency / int8_latency) if fp32_latency and int8_latency else None,
-        "speedup_blockwise": (fp32_latency / blockwise_latency) if fp32_latency and blockwise_latency else None,
+        "speedup_int8": (fp32_cpu_latency / int8_latency) if fp32_cpu_latency and int8_latency else None,
+        "speedup_blockwise": (fp32_gpu_latency / blockwise_latency) if fp32_gpu_latency and blockwise_latency else None,
         "compression_ratio_int8": None,
         "compression_ratio_fake_quant": None,
         "ndcg_drop_pct": _maybe_teacher_quality_drop(cfg, dataset, model, users, item_ids, A_norm, args.k, args.block_size, device),
@@ -310,8 +329,8 @@ def main():
     }
 
 
-    fp32_size = next((r["model_size_mb"] for r in rows if r["variant"] == "fp32"), None)
-    int8_size = next((r["model_size_mb"] for r in rows if r["variant"] == "dynamic_int8"), None)
+    fp32_size = next((r["model_size_mb"] for r in rows if r["variant"] == "fp32_gpu"), None)
+    int8_size = next((r["model_size_mb"] for r in rows if r["variant"] == "dynamic_int8_cpu"), None)
     fq_size = next((r["model_size_mb"] for r in rows if r["variant"] == "fake_quant"), None)
     metrics["compression_ratio_int8"] = (fp32_size / int8_size) if fp32_size and int8_size else None
     metrics["compression_ratio_fake_quant"] = (fp32_size / fq_size) if fp32_size and fq_size else None
