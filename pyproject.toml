@@ -11,6 +11,8 @@ dependencies = [
     "pandas",
     "tqdm",
     "wandb",
+    "fastapi",
+    "uvicorn",
 ]
 
 [build-system]

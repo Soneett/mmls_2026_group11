@@ -289,3 +289,39 @@ python -m src.benchmark_compression \
 - `speedup_int8`
 - `speedup_blockwise`
 - `quality_drop_pct_vs_teacher`
+
+## FastAPI сервис (этап 6)
+
+Добавлен inference-сервис с endpoint-ами:
+
+- `GET /health`
+- `POST /load`
+- `POST /recommend`
+
+Запуск:
+
+```bash
+python -m src.app --host 0.0.0.0 --port 8000
+```
+
+Пример загрузки модели:
+
+```bash
+curl -X POST http://localhost:8000/load \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "checkpoint_path": "checkpoints/student.ckpt",
+    "config_path": "configs/student_kd.yaml",
+    "quantize_int8": false
+  }'
+```
+
+Пример рекомендации:
+
+```bash
+curl -X POST http://localhost:8000/recommend \
+  -H 'Content-Type: application/json' \
+  -d '{"user_id": 0, "k": 20}'
+```
+
+Сервис не меняет train-логику: он только загружает готовый checkpoint, строит эмбеддинги оффлайн и отвечает top-K онлайн.
