@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import torch
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -16,6 +15,21 @@ from src.graph.graph_compose import concat_edges, compute_z_from_edges
 from src.inference.blockwise_scoring import blockwise_topk_dot_product
 from src.quantization.dynamic_int8 import prepare_model_for_dynamic_int8
 from src.training.runner import init_models
+from src.dataset.movie_metadata import load_ml100k_movie_metadata
+
+def _parse_movie_id(raw_item_id: object) -> int | None:
+    if raw_item_id is None:
+        return None
+
+    text = str(raw_item_id)
+
+    if text.startswith("i_"):
+        text = text[2:]
+
+    try:
+        return int(text)
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -24,50 +38,48 @@ class ServingState:
     device: torch.device = torch.device("cpu")
     num_items: int = 0
     item_offset: int = 0
-    item_embeddings: torch.Tensor | None = None
-    user_embeddings: torch.Tensor | None = None
-    user_meta: dict[int, dict[str, Any]] | None = None
-    item_meta: dict[int, dict[str, Any]] | None = None
+    item_embeddings_small: torch.Tensor | None = None
+    user_embeddings_small: torch.Tensor | None = None
+    item_embeddings_big: torch.Tensor | None = None
+    user_embeddings_big: torch.Tensor | None = None
+
+    item_node_to_raw_id: dict[int, str] | None = None
+    movie_metadata: dict[str, dict[str, Any]] | None = None
 
 
 class LoadRequest(BaseModel):
     checkpoint_path: str = Field(..., description="Path to model checkpoint (.ckpt/.pt)")
     config_path: str = Field(..., description="Path to model yaml config")
     quantize_int8: bool = Field(default=False, description="Apply dynamic int8 quantization to encoder/compressor")
-    users_path: str | None = Field(default=None, description="Optional path to u.user")
-    items_path: str | None = Field(default=None, description="Optional path to u.item")
 
 
 class RecommendRequest(BaseModel):
     user_id: int
     k: int = Field(default=20, ge=1)
     item_block_size: int = Field(default=1024, ge=1)
+    branch: str = Field(default="small")
 
 
 class RecommenderService:
     def __init__(self) -> None:
         self.state = ServingState()
 
-    def _load_users_meta(self, users_path: str) -> dict[int, dict[str, Any]]:
-        df = pd.read_csv(users_path, sep="|", header=None, names=["user_id", "age", "gender", "occupation", "zip_code"], engine="python")
-        meta = {}
-        for row in df.itertuples(index=False):
-            meta[int(row.user_id)] = {"user_id": int(row.user_id), "age": int(row.age), "gender": str(row.gender), "occupation": str(row.occupation), "zip_code": str(row.zip_code)}
-        return meta
-
-    def _load_items_meta(self, items_path: str) -> dict[int, dict[str, Any]]:
-        genres = ["unknown", "Action", "Adventure", "Animation", "Children's", "Comedy", "Crime", "Documentary", "Drama", "Fantasy", "Film-Noir", "Horror", "Musical", "Mystery", "Romance", "Sci-Fi", "Thriller", "War", "Western"]
-        names = ["item_id", "title", "release_date", "video_release_date", "imdb_url", *genres]
-        df = pd.read_csv(items_path, sep="|", header=None, names=names, encoding="latin-1", engine="python")
-        meta = {}
-        for _, row in df.iterrows():
-            item_genres = [g for g in genres if int(row[g]) == 1]
-            meta[int(row["item_id"])] = {"item_id": int(row["item_id"]), "title": str(row["title"]), "genres": item_genres}
-        return meta
-
-    def load(self, checkpoint_path: str, config_path: str, quantize_int8: bool = False, users_path: str | None = None, items_path: str | None = None) -> dict[str, Any]:
+    def load(self, checkpoint_path: str, config_path: str, quantize_int8: bool = False) -> dict[str, Any]:
         cfg = load_config(config_path)
         dataset = build_temporal_graph_dataset(cfg)
+
+        raw_item_to_internal = dataset.item_map
+        internal_item_to_raw = {
+            internal_id: raw_item_id
+            for raw_item_id, internal_id in raw_item_to_internal.items()
+        }
+
+        item_node_to_raw_id = {
+            dataset.item_offset + internal_id: raw_item_id
+            for internal_id, raw_item_id in internal_item_to_raw.items()
+        }
+
+        movie_metadata = load_ml100k_movie_metadata("data/u.item")
 
         node_emb, encoder, compressor = init_models(cfg, dataset.num_nodes)
 
@@ -96,7 +108,7 @@ class RecommenderService:
         edge_src, edge_dst = concat_edges(edge_list)
 
         with torch.no_grad():
-            _, z_small = compute_z_from_edges(
+            z_big, z_small = compute_z_from_edges(
                 edge_src=edge_src,
                 edge_dst=edge_dst,
                 num_nodes=dataset.num_nodes,
@@ -106,15 +118,24 @@ class RecommenderService:
                 device=torch.device("cpu"),
             )
 
-        item_ids_global = torch.arange(dataset.item_offset, dataset.item_offset + dataset.num_items, dtype=torch.long)
+        item_ids_global = torch.arange(
+            dataset.item_offset,
+            dataset.item_offset + dataset.num_items,
+            dtype=torch.long,
+        )
         user_ids_global = torch.arange(dataset.item_offset, dtype=torch.long)
 
-        self.state.item_embeddings = z_small[item_ids_global].contiguous().cpu()
-        self.state.user_embeddings = z_small[user_ids_global].contiguous().cpu()
+        self.state.item_embeddings_small = z_small[item_ids_global].contiguous().cpu()
+        self.state.user_embeddings_small = z_small[user_ids_global].contiguous().cpu()
+
+        self.state.item_embeddings_big = z_big[item_ids_global].contiguous().cpu()
+        self.state.user_embeddings_big = z_big[user_ids_global].contiguous().cpu()
         self.state.num_items = int(dataset.num_items)
         self.state.item_offset = int(dataset.item_offset)
-        self.state.user_meta = self._load_users_meta(users_path) if users_path else {}
-        self.state.item_meta = self._load_items_meta(items_path) if items_path else {}
+
+        self.state.item_node_to_raw_id = item_node_to_raw_id
+        self.state.movie_metadata = movie_metadata
+
         self.state.loaded = True
 
         return {
@@ -124,23 +145,42 @@ class RecommenderService:
             "quantize_int8": quantize_int8,
             "checkpoint": str(Path(checkpoint_path)),
             "config": str(Path(config_path)),
-            "users_meta_loaded": bool(self.state.user_meta),
-            "items_meta_loaded": bool(self.state.item_meta),
         }
 
-    def recommend(self, user_id: int, k: int = 20, item_block_size: int = 1024) -> dict[str, Any]:
-        if not self.state.loaded or self.state.item_embeddings is None or self.state.user_embeddings is None:
+    def recommend(
+            self,
+            user_id: int,
+            k: int = 20,
+            item_block_size: int = 1024,
+            branch: str = "small",
+    ) -> dict[str, Any]:
+        if not self.state.loaded:
             raise HTTPException(status_code=400, detail="Model is not loaded. Call /load first.")
 
-        if user_id < 0 or user_id >= self.state.user_embeddings.shape[0]:
+        branch = branch.lower().strip()
+
+        if branch == "small":
+            user_embeddings = self.state.user_embeddings_small
+            item_embeddings = self.state.item_embeddings_small
+        elif branch == "big":
+            user_embeddings = self.state.user_embeddings_big
+            item_embeddings = self.state.item_embeddings_big
+        else:
+            raise HTTPException(status_code=400, detail="Unknown branch. Use 'small' or 'big'.")
+
+        if user_embeddings is None or item_embeddings is None:
+            raise HTTPException(status_code=400, detail="Model embeddings are not loaded.")
+
+        if user_id < 0 or user_id >= user_embeddings.shape[0]:
             raise HTTPException(status_code=404, detail=f"Unknown user_id={user_id}")
 
         k = min(k, self.state.num_items)
 
-        user_vec = self.state.user_embeddings[user_id : user_id + 1]
+        user_vec = user_embeddings[user_id: user_id + 1]
+
         scores, indices = blockwise_topk_dot_product(
             user_embeddings=user_vec,
-            item_embeddings=self.state.item_embeddings,
+            item_embeddings=item_embeddings,
             k=k,
             item_block_size=item_block_size,
             largest=True,
@@ -150,21 +190,41 @@ class RecommenderService:
         rec_item_ids = (indices[0] + self.state.item_offset).tolist()
         rec_scores = scores[0].tolist()
 
-        user_payload = self.state.user_meta.get(user_id) if self.state.user_meta else {"user_id": user_id}
+        recommendations = []
 
-        recs = []
         for item_id, score in zip(rec_item_ids, rec_scores):
-            item_payload = {"item_id": int(item_id), "score": float(score)}
-            if self.state.item_meta and int(item_id) in self.state.item_meta:
-                item_payload.update({
-                    "title": self.state.item_meta[int(item_id)].get("title", ""),
-                    "genres": self.state.item_meta[int(item_id)].get("genres", []),
-                })
-            recs.append(item_payload)
+            raw_movie_id = None
+            movie_id = None
+            movie_info = {}
+
+            if self.state.item_node_to_raw_id is not None:
+                raw_movie_id = self.state.item_node_to_raw_id.get(int(item_id))
+                movie_id = _parse_movie_id(raw_movie_id)
+
+            if (
+                    movie_id is not None
+                    and self.state.movie_metadata is not None
+            ):
+                movie_info = self.state.movie_metadata.get(str(movie_id), {})
+
+            recommendations.append(
+                {
+                    "item_id": int(item_id),
+                    "raw_item_id": raw_movie_id,
+                    "movie_id": movie_id,
+                    "title": movie_info.get("title"),
+                    "release_date": movie_info.get("release_date"),
+                    "genres": movie_info.get("genres", []),
+                    "imdb_url": movie_info.get("imdb_url"),
+                    "score": float(score),
+                }
+            )
 
         return {
-            "user": user_payload,
-            "recommendations": recs,
+            "user_id": user_id,
+            "k": k,
+            "branch": branch,
+            "recommendations": recommendations,
         }
 
 
@@ -183,8 +243,6 @@ def load_model(payload: LoadRequest) -> dict[str, Any]:
         checkpoint_path=payload.checkpoint_path,
         config_path=payload.config_path,
         quantize_int8=payload.quantize_int8,
-        users_path=payload.users_path,
-        items_path=payload.items_path,
     )
 
 
@@ -194,6 +252,7 @@ def recommend(payload: RecommendRequest) -> dict[str, Any]:
         user_id=payload.user_id,
         k=payload.k,
         item_block_size=payload.item_block_size,
+        branch=payload.branch,
     )
 
 
