@@ -16,7 +16,6 @@ venv/
 
 # Checkpoints
 .ipynb_checkpoints/
-checkpoints/
 
 # Logs / temp / wandb
 *.log
