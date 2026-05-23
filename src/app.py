@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import torch
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -25,12 +26,16 @@ class ServingState:
     item_offset: int = 0
     item_embeddings: torch.Tensor | None = None
     user_embeddings: torch.Tensor | None = None
+    user_meta: dict[int, dict[str, Any]] | None = None
+    item_meta: dict[int, dict[str, Any]] | None = None
 
 
 class LoadRequest(BaseModel):
     checkpoint_path: str = Field(..., description="Path to model checkpoint (.ckpt/.pt)")
     config_path: str = Field(..., description="Path to model yaml config")
     quantize_int8: bool = Field(default=False, description="Apply dynamic int8 quantization to encoder/compressor")
+    users_path: str | None = Field(default=None, description="Optional path to u.user")
+    items_path: str | None = Field(default=None, description="Optional path to u.item")
 
 
 class RecommendRequest(BaseModel):
@@ -43,7 +48,24 @@ class RecommenderService:
     def __init__(self) -> None:
         self.state = ServingState()
 
-    def load(self, checkpoint_path: str, config_path: str, quantize_int8: bool = False) -> dict[str, Any]:
+    def _load_users_meta(self, users_path: str) -> dict[int, dict[str, Any]]:
+        df = pd.read_csv(users_path, sep="|", header=None, names=["user_id", "age", "gender", "occupation", "zip_code"], engine="python")
+        meta = {}
+        for row in df.itertuples(index=False):
+            meta[int(row.user_id)] = {"user_id": int(row.user_id), "age": int(row.age), "gender": str(row.gender), "occupation": str(row.occupation), "zip_code": str(row.zip_code)}
+        return meta
+
+    def _load_items_meta(self, items_path: str) -> dict[int, dict[str, Any]]:
+        genres = ["unknown", "Action", "Adventure", "Animation", "Children's", "Comedy", "Crime", "Documentary", "Drama", "Fantasy", "Film-Noir", "Horror", "Musical", "Mystery", "Romance", "Sci-Fi", "Thriller", "War", "Western"]
+        names = ["item_id", "title", "release_date", "video_release_date", "imdb_url", *genres]
+        df = pd.read_csv(items_path, sep="|", header=None, names=names, encoding="latin-1", engine="python")
+        meta = {}
+        for _, row in df.iterrows():
+            item_genres = [g for g in genres if int(row[g]) == 1]
+            meta[int(row["item_id"])] = {"item_id": int(row["item_id"]), "title": str(row["title"]), "genres": item_genres}
+        return meta
+
+    def load(self, checkpoint_path: str, config_path: str, quantize_int8: bool = False, users_path: str | None = None, items_path: str | None = None) -> dict[str, Any]:
         cfg = load_config(config_path)
         dataset = build_temporal_graph_dataset(cfg)
 
@@ -91,6 +113,8 @@ class RecommenderService:
         self.state.user_embeddings = z_small[user_ids_global].contiguous().cpu()
         self.state.num_items = int(dataset.num_items)
         self.state.item_offset = int(dataset.item_offset)
+        self.state.user_meta = self._load_users_meta(users_path) if users_path else {}
+        self.state.item_meta = self._load_items_meta(items_path) if items_path else {}
         self.state.loaded = True
 
         return {
@@ -100,6 +124,8 @@ class RecommenderService:
             "quantize_int8": quantize_int8,
             "checkpoint": str(Path(checkpoint_path)),
             "config": str(Path(config_path)),
+            "users_meta_loaded": bool(self.state.user_meta),
+            "items_meta_loaded": bool(self.state.item_meta),
         }
 
     def recommend(self, user_id: int, k: int = 20, item_block_size: int = 1024) -> dict[str, Any]:
@@ -124,13 +150,21 @@ class RecommenderService:
         rec_item_ids = (indices[0] + self.state.item_offset).tolist()
         rec_scores = scores[0].tolist()
 
+        user_payload = self.state.user_meta.get(user_id) if self.state.user_meta else {"user_id": user_id}
+
+        recs = []
+        for item_id, score in zip(rec_item_ids, rec_scores):
+            item_payload = {"item_id": int(item_id), "score": float(score)}
+            if self.state.item_meta and int(item_id) in self.state.item_meta:
+                item_payload.update({
+                    "title": self.state.item_meta[int(item_id)].get("title", ""),
+                    "genres": self.state.item_meta[int(item_id)].get("genres", []),
+                })
+            recs.append(item_payload)
+
         return {
-            "user_id": user_id,
-            "k": k,
-            "recommendations": [
-                {"item_id": int(item_id), "score": float(score)}
-                for item_id, score in zip(rec_item_ids, rec_scores)
-            ],
+            "user": user_payload,
+            "recommendations": recs,
         }
 
 
@@ -149,6 +183,8 @@ def load_model(payload: LoadRequest) -> dict[str, Any]:
         checkpoint_path=payload.checkpoint_path,
         config_path=payload.config_path,
         quantize_int8=payload.quantize_int8,
+        users_path=payload.users_path,
+        items_path=payload.items_path,
     )
 
 
