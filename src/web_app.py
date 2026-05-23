@@ -214,6 +214,52 @@ def index() -> str:
             display: none;
         }
 
+        .user-card {
+            border: 1px solid #dbeafe;
+            border-radius: 18px;
+            padding: 16px 18px;
+            background: linear-gradient(180deg, #eff6ff 0%, #f8fbff 100%);
+            margin-bottom: 18px;
+        }
+
+        .user-card h3 {
+            margin: 0 0 4px;
+            font-size: 18px;
+            color: #1e3a8a;
+        }
+
+        .user-subtitle {
+            margin: 0 0 12px;
+            color: #6b7280;
+            font-size: 13px;
+        }
+
+        .user-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px 14px;
+        }
+
+        .user-pill {
+            background: #ffffff;
+            border: 1px solid #dbeafe;
+            border-radius: 12px;
+            padding: 10px 12px;
+        }
+
+        .user-field {
+            display: block;
+            font-size: 12px;
+            color: #6b7280;
+            margin-bottom: 4px;
+        }
+
+        .user-value {
+            font-size: 15px;
+            font-weight: 700;
+            color: #111827;
+        }
+
         table {
             width: 100%;
             table-layout: fixed;
@@ -358,6 +404,10 @@ def index() -> str:
             .branches-grid {
                 grid-template-columns: 1fr;
             }
+
+            .user-grid {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
@@ -392,6 +442,16 @@ def index() -> str:
             <div id="results" class="results">
                 <h2>Recommendations</h2>
             
+                <section id="userInfo" class="user-card" style="display: none;">
+                    <h3>User profile</h3>
+                    <p class="user-subtitle">Demographic metadata for the selected user.</p>
+                    <div class="user-grid">
+                        <div class="user-pill"><span class="user-field">Age</span><span class="user-value" id="userAge">—</span></div>
+                        <div class="user-pill"><span class="user-field">Gender</span><span class="user-value" id="userGender">—</span></div>
+                        <div class="user-pill"><span class="user-field">Occupation</span><span class="user-value" id="userOccupation">—</span></div>
+                    </div>
+                </section>
+
                 <div class="branches-grid">
                     <section class="branch-card">
                         <div class="branch-header">
@@ -502,6 +562,14 @@ def index() -> str:
             return data;
         }
         
+        function renderUserInfo(data) {
+            const info = data.user || {};
+            document.getElementById("userAge").textContent = info.age ?? "Unknown";
+            document.getElementById("userGender").textContent = info.gender ?? "Unknown";
+            document.getElementById("userOccupation").textContent = info.occupation ?? "Unknown";
+            document.getElementById("userInfo").style.display = "block";
+        }
+
         function renderRecommendations(data, tbodyId) {
             const resultsBody = document.getElementById(tbodyId);
             resultsBody.innerHTML = "";
@@ -541,6 +609,7 @@ def index() -> str:
             results.style.display = "none";
             document.getElementById("smallResultsBody").innerHTML = "";
             document.getElementById("bigResultsBody").innerHTML = "";
+            document.getElementById("userInfo").style.display = "none";
         
             try {
                 const userId = parseBoundedInteger(userIdText, "user_id", 0, 942);
@@ -554,6 +623,7 @@ def index() -> str:
                     fetchRecommendations(userId, k, "big")
                 ]);
         
+                renderUserInfo(smallData);
                 renderRecommendations(smallData, "smallResultsBody");
                 renderRecommendations(bigData, "bigResultsBody");
         

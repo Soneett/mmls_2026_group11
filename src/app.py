@@ -16,20 +16,30 @@ from src.inference.blockwise_scoring import blockwise_topk_dot_product
 from src.quantization.dynamic_int8 import prepare_model_for_dynamic_int8
 from src.training.runner import init_models
 from src.dataset.movie_metadata import load_ml100k_movie_metadata
+from src.dataset.user_metadata import load_ml100k_user_metadata
 
-def _parse_movie_id(raw_item_id: object) -> int | None:
-    if raw_item_id is None:
+def _parse_movielens_id(raw_id: object, prefix: str) -> int | None:
+    if raw_id is None:
         return None
 
-    text = str(raw_item_id)
+    text = str(raw_id)
 
-    if text.startswith("i_"):
-        text = text[2:]
+    if text.startswith(prefix):
+        text = text[len(prefix):]
 
     try:
         return int(text)
     except ValueError:
         return None
+
+
+def _parse_movie_id(raw_item_id: object) -> int | None:
+    return _parse_movielens_id(raw_item_id, "i_")
+
+
+def _parse_user_id(raw_user_id: object) -> int | None:
+    return _parse_movielens_id(raw_user_id, "u_")
+
 
 
 @dataclass
@@ -44,7 +54,9 @@ class ServingState:
     user_embeddings_big: torch.Tensor | None = None
 
     item_node_to_raw_id: dict[int, str] | None = None
+    user_node_to_raw_id: dict[int, str] | None = None
     movie_metadata: dict[str, dict[str, Any]] | None = None
+    user_metadata: dict[str, dict[str, Any]] | None = None
 
 
 class LoadRequest(BaseModel):
@@ -68,10 +80,16 @@ class RecommenderService:
         cfg = load_config(config_path)
         dataset = build_temporal_graph_dataset(cfg)
 
+        raw_user_to_internal = dataset.user_map
         raw_item_to_internal = dataset.item_map
         internal_item_to_raw = {
             internal_id: raw_item_id
             for raw_item_id, internal_id in raw_item_to_internal.items()
+        }
+
+        user_node_to_raw_id = {
+            internal_id: raw_user_id
+            for raw_user_id, internal_id in raw_user_to_internal.items()
         }
 
         item_node_to_raw_id = {
@@ -80,6 +98,7 @@ class RecommenderService:
         }
 
         movie_metadata = load_ml100k_movie_metadata("data/u.item")
+        user_metadata = load_ml100k_user_metadata("dics/u.user")
 
         node_emb, encoder, compressor = init_models(cfg, dataset.num_nodes)
 
@@ -134,7 +153,9 @@ class RecommenderService:
         self.state.item_offset = int(dataset.item_offset)
 
         self.state.item_node_to_raw_id = item_node_to_raw_id
+        self.state.user_node_to_raw_id = user_node_to_raw_id
         self.state.movie_metadata = movie_metadata
+        self.state.user_metadata = user_metadata
 
         self.state.loaded = True
 
@@ -175,6 +196,17 @@ class RecommenderService:
             raise HTTPException(status_code=404, detail=f"Unknown user_id={user_id}")
 
         k = min(k, self.state.num_items)
+
+        raw_user_id = None
+        movielens_user_id = None
+        user_info = {}
+
+        if self.state.user_node_to_raw_id is not None:
+            raw_user_id = self.state.user_node_to_raw_id.get(int(user_id))
+            movielens_user_id = _parse_user_id(raw_user_id)
+
+        if movielens_user_id is not None and self.state.user_metadata is not None:
+            user_info = self.state.user_metadata.get(str(movielens_user_id), {})
 
         user_vec = user_embeddings[user_id: user_id + 1]
 
@@ -222,6 +254,14 @@ class RecommenderService:
 
         return {
             "user_id": user_id,
+            "raw_user_id": raw_user_id,
+            "movielens_user_id": movielens_user_id,
+            "user": {
+                "age": user_info.get("age"),
+                "gender": user_info.get("gender"),
+                "occupation": user_info.get("occupation"),
+                "zip_code": user_info.get("zip_code"),
+            },
             "k": k,
             "branch": branch,
             "recommendations": recommendations,
