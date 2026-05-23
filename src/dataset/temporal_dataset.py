@@ -25,6 +25,9 @@ class TemporalGraphDataset:
     val_time: int
     test_time: int
 
+    user_map: dict[str, int]
+    item_map: dict[str, int]
+
 
 def build_temporal_graph_dataset(cfg) -> TemporalGraphDataset:
     df = load_ml100k_as_events(cfg.ml100k_path)
@@ -79,4 +82,6 @@ def build_temporal_graph_dataset(cfg) -> TemporalGraphDataset:
         item_offset=item_offset,
         val_time=val_time,
         test_time=test_time,
+        user_map=user_map,
+        item_map=item_map,
     )
