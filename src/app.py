@@ -4,6 +4,7 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import random
 
 import torch
 from fastapi import FastAPI, HTTPException
@@ -67,6 +68,16 @@ class LoadRequest(BaseModel):
 
 class RecommendRequest(BaseModel):
     user_id: int
+    k: int = Field(default=20, ge=1)
+    item_block_size: int = Field(default=1024, ge=1)
+    branch: str = Field(default="small")
+
+
+class RecommendFromPreferencesRequest(BaseModel):
+    gender: str
+    age: int = Field(..., ge=1)
+    occupation: str
+    selected_movie_ids: list[int] = Field(default_factory=list)
     k: int = Field(default=20, ge=1)
     item_block_size: int = Field(default=1024, ge=1)
     branch: str = Field(default="small")
@@ -166,6 +177,113 @@ class RecommenderService:
             "quantize_int8": quantize_int8,
             "checkpoint": str(Path(checkpoint_path)),
             "config": str(Path(config_path)),
+        }
+
+    def movies_onboarding(self, n: int = 80) -> dict[str, Any]:
+        if not self.state.loaded:
+            raise HTTPException(status_code=400, detail="Model is not loaded. Call /load first.")
+        if self.state.item_node_to_raw_id is None:
+            raise HTTPException(status_code=500, detail="Item mapping is unavailable.")
+
+        available_item_ids = list(self.state.item_node_to_raw_id.keys())
+        n = max(1, min(n, len(available_item_ids)))
+        sampled_item_ids = random.sample(available_item_ids, k=n)
+
+        movies = []
+        for item_id in sampled_item_ids:
+            raw_movie_id = self.state.item_node_to_raw_id.get(int(item_id))
+            movie_id = _parse_movie_id(raw_movie_id)
+            title = None
+            if movie_id is not None and self.state.movie_metadata is not None:
+                title = self.state.movie_metadata.get(str(movie_id), {}).get("title")
+            movies.append(
+                {
+                    "item_id": int(item_id),
+                    "raw_item_id": raw_movie_id,
+                    "movie_id": movie_id,
+                    "title": title or f"MovieLens item {raw_movie_id or item_id}",
+                }
+            )
+        return {"movies": movies}
+
+    def recommend_from_preferences(self, payload: RecommendFromPreferencesRequest) -> dict[str, Any]:
+        if not self.state.loaded:
+            raise HTTPException(status_code=400, detail="Model is not loaded. Call /load first.")
+        if not payload.selected_movie_ids:
+            raise HTTPException(status_code=400, detail="selected_movie_ids must not be empty.")
+
+        branch = payload.branch.lower().strip()
+        if branch == "small":
+            item_embeddings = self.state.item_embeddings_small
+        elif branch == "big":
+            item_embeddings = self.state.item_embeddings_big
+        else:
+            raise HTTPException(status_code=400, detail="Unknown branch. Use 'small' or 'big'.")
+
+        if item_embeddings is None:
+            raise HTTPException(status_code=400, detail="Model embeddings are not loaded.")
+
+        min_item_id = self.state.item_offset
+        max_item_id = self.state.item_offset + self.state.num_items - 1
+        invalid_ids = [item_id for item_id in payload.selected_movie_ids if item_id < min_item_id or item_id > max_item_id]
+        if invalid_ids:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown item_id values: {sorted(set(invalid_ids))}",
+            )
+
+        selected_indices = torch.tensor(
+            [item_id - self.state.item_offset for item_id in payload.selected_movie_ids],
+            dtype=torch.long,
+        )
+        selected_item_embeddings = item_embeddings[selected_indices]
+        user_vec = selected_item_embeddings.mean(dim=0, keepdim=True)
+
+        k = min(payload.k, self.state.num_items)
+        scores, indices = blockwise_topk_dot_product(
+            user_embeddings=user_vec,
+            item_embeddings=item_embeddings,
+            k=k,
+            item_block_size=payload.item_block_size,
+            largest=True,
+            sorted=True,
+        )
+
+        recommendations = []
+        rec_item_ids = (indices[0] + self.state.item_offset).tolist()
+        rec_scores = scores[0].tolist()
+        for item_id, score in zip(rec_item_ids, rec_scores):
+            raw_movie_id = None
+            movie_id = None
+            movie_info = {}
+            if self.state.item_node_to_raw_id is not None:
+                raw_movie_id = self.state.item_node_to_raw_id.get(int(item_id))
+                movie_id = _parse_movie_id(raw_movie_id)
+            if movie_id is not None and self.state.movie_metadata is not None:
+                movie_info = self.state.movie_metadata.get(str(movie_id), {})
+            recommendations.append(
+                {
+                    "item_id": int(item_id),
+                    "raw_item_id": raw_movie_id,
+                    "movie_id": movie_id,
+                    "title": movie_info.get("title"),
+                    "release_date": movie_info.get("release_date"),
+                    "genres": movie_info.get("genres", []),
+                    "imdb_url": movie_info.get("imdb_url"),
+                    "score": float(score),
+                }
+            )
+
+        return {
+            "user": {
+                "age": payload.age,
+                "gender": payload.gender,
+                "occupation": payload.occupation,
+            },
+            "selected_movie_ids": payload.selected_movie_ids,
+            "k": k,
+            "branch": branch,
+            "recommendations": recommendations,
         }
 
     def recommend(
@@ -294,6 +412,16 @@ def recommend(payload: RecommendRequest) -> dict[str, Any]:
         item_block_size=payload.item_block_size,
         branch=payload.branch,
     )
+
+
+@app.get("/movies_onboarding")
+def movies_onboarding(n: int = 80) -> dict[str, Any]:
+    return service.movies_onboarding(n=n)
+
+
+@app.post("/recommend_from_preferences")
+def recommend_from_preferences(payload: RecommendFromPreferencesRequest) -> dict[str, Any]:
+    return service.recommend_from_preferences(payload)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:

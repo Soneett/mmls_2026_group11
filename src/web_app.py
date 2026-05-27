@@ -70,6 +70,16 @@ class UIRecommendRequest(BaseModel):
     branch: str = Field(default="small")
 
 
+class UIRecommendFromPreferencesRequest(BaseModel):
+    gender: str
+    age: int = Field(..., ge=1)
+    occupation: str
+    selected_movie_ids: list[int] = Field(default_factory=list)
+    k: int = Field(default=5, ge=1, le=50)
+    item_block_size: int = Field(default=DEFAULT_ITEM_BLOCK_SIZE, ge=1)
+    branch: str = Field(default="small")
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {
@@ -90,6 +100,16 @@ def api_recommend(payload: UIRecommendRequest) -> dict[str, Any]:
         item_block_size=DEFAULT_ITEM_BLOCK_SIZE,
         branch=payload.branch,
     )
+
+
+@app.get("/api/movies_onboarding")
+def api_movies_onboarding(n: int = 80) -> dict[str, Any]:
+    return service.movies_onboarding(n=n)
+
+
+@app.post("/api/recommend_from_preferences")
+def api_recommend_from_preferences(payload: UIRecommendFromPreferencesRequest) -> dict[str, Any]:
+    return service.recommend_from_preferences(payload)
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
@@ -325,6 +345,23 @@ def index() -> str:
             font-variant-numeric: tabular-nums;
         }
 
+        .onboarding-movie-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+            font-size: 14px;
+            color: #111827;
+            cursor: pointer;
+        }
+
+        .onboarding-movie-row input[type="checkbox"] {
+            width: auto;
+            margin: 0;
+            padding: 0;
+            transform: translateY(1px);
+        }
+
         .note {
             margin-top: 18px;
             color: #6b7280;
@@ -435,6 +472,19 @@ def index() -> str:
 
                 <button id="recommendBtn" onclick="recommend()">Recommend</button>
             </div>
+
+            <hr style="margin: 20px 0; border: none; border-top: 1px solid #e5e7eb;" />
+            <h2 style="margin: 0 0 8px;">Cold-start recommendations</h2>
+            <p class="subtitle" style="margin-bottom: 12px;">Fill profile and select watched movies from onboarding list.</p>
+            <div class="form" style="grid-template-columns: repeat(4,minmax(0,1fr));">
+                <div><label for="prefGender">Gender</label><input id="prefGender" type="text" value="M" /></div>
+                <div><label for="prefAge">Age</label><input id="prefAge" type="text" value="25" /></div>
+                <div><label for="prefOccupation">Occupation</label><input id="prefOccupation" type="text" value="student" /></div>
+                <div><label for="prefK">k</label><input id="prefK" type="text" value="5" /></div>
+            </div>
+            <button id="loadOnboardingBtn" onclick="loadOnboardingMovies()" style="margin-top:0;">Load onboarding movies</button>
+            <button id="recommendFromPrefsBtn" onclick="recommendFromPreferences()" style="margin-top:0; margin-left:8px; display:none;">Recommend from preferences</button>
+            <div id="onboardingMovies" style="margin-top:12px; max-height:240px; overflow:auto; border:1px solid #e5e7eb; border-radius:12px; padding:10px;"></div>
 
             <p id="status" class="status">Ready.</p>
             <div id="error" class="error"></div>
@@ -594,6 +644,69 @@ def index() -> str:
         
                 resultsBody.appendChild(row);
             });
+        }
+
+        async function loadOnboardingMovies() {
+            const response = await fetch('/api/movies_onboarding?n=80');
+            const data = await response.json();
+            if (!response.ok) throw new Error(formatBackendError(data));
+            const container = document.getElementById('onboardingMovies');
+            const recommendBtn = document.getElementById('recommendFromPrefsBtn');
+            container.innerHTML = '';
+            recommendBtn.style.display = 'none';
+            data.movies.forEach((movie) => {
+                const row = document.createElement('label');
+                row.className = 'onboarding-movie-row';
+                row.innerHTML = `<input type="checkbox" class="onboarding-movie" value="${movie.item_id}" /> ${movie.title}`;
+                row.querySelector('input').addEventListener('change', () => {
+                    const selectedCount = document.querySelectorAll('.onboarding-movie:checked').length;
+                    recommendBtn.style.display = selectedCount > 0 ? 'inline-block' : 'none';
+                });
+                container.appendChild(row);
+            });
+            document.getElementById('status').textContent = `Loaded ${data.movies.length} onboarding movies.`;
+        }
+
+        async function recommendFromPreferences() {
+            const age = parseBoundedInteger(document.getElementById('prefAge').value, 'age', 1, 120);
+            const k = parseBoundedInteger(document.getElementById('prefK').value, 'k', 1, 50);
+            const gender = document.getElementById('prefGender').value.trim();
+            const occupation = document.getElementById('prefOccupation').value.trim();
+            const selected = Array.from(document.querySelectorAll('.onboarding-movie:checked')).map((x) => Number(x.value));
+            if (selected.length === 0) throw new Error('Please select at least one movie.');
+
+            const requestPayload = {
+                gender,
+                age,
+                occupation,
+                selected_movie_ids: selected,
+                k,
+                item_block_size: 1024,
+            };
+
+            const [smallResponse, bigResponse] = await Promise.all([
+                fetch('/api/recommend_from_preferences', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({...requestPayload, branch: 'small'})
+                }),
+                fetch('/api/recommend_from_preferences', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({...requestPayload, branch: 'big'})
+                })
+            ]);
+
+            const smallData = await smallResponse.json();
+            const bigData = await bigResponse.json();
+            if (!smallResponse.ok) throw new Error(formatBackendError(smallData));
+            if (!bigResponse.ok) throw new Error(formatBackendError(bigData));
+
+            renderUserInfo(smallData);
+            renderRecommendations(smallData, 'smallResultsBody');
+            renderRecommendations(bigData, 'bigResultsBody');
+            document.getElementById('results').style.display = 'block';
+            document.getElementById('status').textContent = 'Cold-start recommendations ready for both branches.';
         }
 
         async function recommend() {

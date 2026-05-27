@@ -245,7 +245,7 @@ Docker автоматически подгрузит переменные из .
 
 ## CPU-бенчмарки сжатия (latency / throughput / peak memory / model size)
 
-Добавлен скрипт `src/benchmark_compression.py`, который считает метрики для двух вариантов студента на CPU:
+Cкрипт `src/benchmark_compression.py` считает метрики для двух вариантов студента на CPU:
 
 - `student_fp32`
 - `student_int8`
@@ -290,9 +290,9 @@ python -m src.benchmark_compression \
 - `speedup_blockwise`
 - `quality_drop_pct_vs_teacher`
 
-## FastAPI сервис (этап 6)
+## FastAPI сервис 
 
-Добавлен inference-сервис с endpoint-ами:
+inference-сервис с endpoint-ами:
 
 - `GET /health`
 - `POST /load`
@@ -324,4 +324,25 @@ curl -X POST http://localhost:8000/recommend \
   -d '{"user_id": 0, "k": 20}'
 ```
 
-Сервис не меняет train-логику: он только загружает готовый checkpoint, строит эмбеддинги оффлайн и отвечает top-K онлайн.
+Сервис загружает готовый checkpoint, строит эмбеддинги оффлайн и отвечает top-K онлайн.
+
+## Inference API для cold-start пользователей
+
+endpoint'ы для онбординга нового пользователя:
+
+- `GET /movies_onboarding?n=80` — вернуть список фильмов для выбора.
+- `POST /recommend_from_preferences` — построить user embedding как среднее эмбеддингов выбранных фильмов и вернуть top-K рекомендации.
+
+Пример запроса:
+
+```bash
+curl -X POST http://127.0.0.1:8000/recommend_from_preferences \
+  -H "Content-Type: application/json" \
+  -d '{
+    "gender": "M",
+    "age": 25,
+    "occupation": "student",
+    "selected_movie_ids": [12, 55, 91],
+    "k": 20
+  }'
+```
