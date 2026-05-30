@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field
 
 from src.app import service
 
-
 DEFAULT_CHECKPOINT_PATH = Path(
     "checkpoints/best-epoch=18-val_ndcg_small=0.0239.ckpt"
 )
@@ -22,6 +21,30 @@ DEFAULT_CONFIG_PATH = Path(
 
 DEFAULT_QUANTIZE_INT8 = False
 DEFAULT_ITEM_BLOCK_SIZE = 1024
+DEFAULT_USER_METADATA_PATH = Path("data/u.user")
+
+
+def load_occupation_options() -> list[str]:
+    """
+    Loads occupation values from MovieLens 100k user metadata.
+
+    In MovieLens 100k, occupations are stored in data/u.user, not in data/u.item.
+    data/u.item contains movie metadata.
+    """
+    occupations: set[str] = set()
+
+    if DEFAULT_USER_METADATA_PATH.exists():
+        with DEFAULT_USER_METADATA_PATH.open("r", encoding="latin-1") as file:
+            for line in file:
+                parts = line.strip().split("|")
+                if len(parts) >= 4 and parts[3]:
+                    occupations.add(parts[3])
+
+    result = sorted(occupations)
+    if "other" not in result:
+        result.append("other")
+
+    return result
 
 
 def load_default_model() -> dict[str, Any]:
@@ -107,9 +130,15 @@ def api_movies_onboarding(n: int = 80) -> dict[str, Any]:
     return service.movies_onboarding(n=n)
 
 
+@app.get("/api/occupation_options")
+def api_occupation_options() -> dict[str, Any]:
+    return {"occupations": load_occupation_options()}
+
+
 @app.post("/api/recommend_from_preferences")
 def api_recommend_from_preferences(payload: UIRecommendFromPreferencesRequest) -> dict[str, Any]:
     return service.recommend_from_preferences(payload)
+
 
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
@@ -171,7 +200,7 @@ def index() -> str:
             color: #374151;
         }
 
-        input {
+        input, select {
             width: 100%;
             box-sizing: border-box;
             border: 1px solid #d1d5db;
@@ -179,9 +208,10 @@ def index() -> str:
             padding: 12px 14px;
             font-size: 16px;
             outline: none;
+            background: white;
         }
 
-        input:focus {
+        input:focus, select:focus {
             border-color: #2563eb;
             box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
         }
@@ -368,57 +398,57 @@ def index() -> str:
             font-size: 14px;
             line-height: 1.5;
         }
-        
+
         .branches-grid {
             display: grid;
             grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
             gap: 20px;
             align-items: start;
         }
-        
+
         .branch-card {
             border: 1px solid #e5e7eb;
             border-radius: 18px;
             padding: 18px;
             background: #ffffff;
         }
-        
+
         .branch-header h3 {
             margin: 0;
             font-size: 20px;
         }
-        
+
         .branch-header p {
             margin: 6px 0 16px;
             color: #6b7280;
             font-size: 14px;
             line-height: 1.4;
         }
-        
+
         .branch-card table {
             font-size: 14px;
         }
-        
+
         .branch-card th,
         .branch-card td {
             padding: 12px 10px;
         }
-        
+
         .branch-card th:nth-child(1),
         .branch-card td:nth-child(1) {
             width: 55px;
         }
-        
+
         .branch-card th:nth-child(2),
         .branch-card td:nth-child(2) {
             width: 42%;
         }
-        
+
         .branch-card th:nth-child(3),
         .branch-card td:nth-child(3) {
             width: 30%;
         }
-        
+
         .branch-card th:nth-child(4),
         .branch-card td:nth-child(4) {
             width: 80px;
@@ -437,7 +467,7 @@ def index() -> str:
             table {
                 table-layout: auto;
             }
-            
+
             .branches-grid {
                 grid-template-columns: 1fr;
             }
@@ -477,21 +507,32 @@ def index() -> str:
             <h2 style="margin: 0 0 8px;">Cold-start recommendations</h2>
             <p class="subtitle" style="margin-bottom: 12px;">Fill profile and select watched movies from onboarding list.</p>
             <div class="form" style="grid-template-columns: repeat(4,minmax(0,1fr));">
-                <div><label for="prefGender">Gender</label><input id="prefGender" type="text" value="M" /></div>
+                <div>
+                    <label for="prefGender">Gender</label>
+                    <select id="prefGender">
+                        <option value="F">F</option>
+                        <option value="M" selected>M</option>
+                    </select>
+                </div>
                 <div><label for="prefAge">Age</label><input id="prefAge" type="text" value="25" /></div>
-                <div><label for="prefOccupation">Occupation</label><input id="prefOccupation" type="text" value="student" /></div>
+                <div>
+                    <label for="prefOccupation">Occupation</label>
+                    <select id="prefOccupation">
+                        <option value="other">Loading occupations...</option>
+                    </select>
+                </div>
                 <div><label for="prefK">k</label><input id="prefK" type="text" value="5" /></div>
             </div>
             <button id="loadOnboardingBtn" onclick="loadOnboardingMovies()" style="margin-top:0;">Load onboarding movies</button>
             <button id="recommendFromPrefsBtn" onclick="recommendFromPreferences()" style="margin-top:0; margin-left:8px; display:none;">Recommend from preferences</button>
-            <div id="onboardingMovies" style="margin-top:12px; max-height:240px; overflow:auto; border:1px solid #e5e7eb; border-radius:12px; padding:10px;"></div>
+            <div id="onboardingMovies" style="display:none; margin-top:12px; max-height:240px; overflow:auto; border:1px solid #e5e7eb; border-radius:12px; padding:10px;"></div>
 
             <p id="status" class="status">Ready.</p>
             <div id="error" class="error"></div>
 
             <div id="results" class="results">
                 <h2>Recommendations</h2>
-            
+
                 <section id="userInfo" class="user-card" style="display: none;">
                     <h3>User profile</h3>
                     <p class="user-subtitle">Demographic metadata for the selected user.</p>
@@ -508,7 +549,7 @@ def index() -> str:
                             <h3>Small branch</h3>
                             <p>Compressed embeddings from the same checkpoint.</p>
                         </div>
-            
+
                         <table>
                             <thead>
                                 <tr>
@@ -521,13 +562,13 @@ def index() -> str:
                             <tbody id="smallResultsBody"></tbody>
                         </table>
                     </section>
-            
+
                     <section class="branch-card">
                         <div class="branch-header">
                             <h3>Big branch</h3>
                             <p>Full embeddings from the same checkpoint.</p>
                         </div>
-            
+
                         <table>
                             <thead>
                                 <tr>
@@ -541,7 +582,7 @@ def index() -> str:
                         </table>
                     </section>
                 </div>
-            
+
                 <p class="note">
                     Score is the model relevance score: the higher it is, the higher the movie is ranked for this user.
                 </p>
@@ -602,16 +643,16 @@ def index() -> str:
                     branch: branch
                 })
             });
-        
+
             const data = await response.json();
-        
+
             if (!response.ok) {
                 throw new Error(formatBackendError(data));
             }
-        
+
             return data;
         }
-        
+
         function renderUserInfo(data) {
             const info = data.user || {};
             document.getElementById("userAge").textContent = info.age ?? "Unknown";
@@ -623,15 +664,15 @@ def index() -> str:
         function renderRecommendations(data, tbodyId) {
             const resultsBody = document.getElementById(tbodyId);
             resultsBody.innerHTML = "";
-        
+
             data.recommendations.forEach((rec, index) => {
                 const row = document.createElement("tr");
-        
+
                 const title = rec.title || `MovieLens item ${rec.raw_item_id || rec.item_id}`;
                 const genres = rec.genres && rec.genres.length > 0
                     ? rec.genres.join(", ")
                     : "Unknown";
-        
+
                 row.innerHTML = `
                     <td class="rank">#${index + 1}</td>
                     <td>
@@ -641,9 +682,46 @@ def index() -> str:
                     <td class="genres-cell">${genres}</td>
                     <td class="score-cell">${rec.score.toFixed(4)}</td>
                 `;
-        
+
                 resultsBody.appendChild(row);
             });
+        }
+
+        async function loadOccupationOptions() {
+            const select = document.getElementById('prefOccupation');
+
+            try {
+                const response = await fetch('/api/occupation_options');
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(formatBackendError(data));
+                }
+
+                const occupations = (data.occupations || []).sort((a, b) => {
+                    if (a === 'none') return -1;
+                    if (b === 'none') return 1;
+                    if (a === 'other') return 1;
+                    if (b === 'other') return -1;
+                    return a.localeCompare(b);
+                });
+                select.innerHTML = '';
+
+                occupations.forEach((occupation) => {
+                    const option = document.createElement('option');
+                    option.value = occupation;
+                    option.textContent = occupation;
+
+                    if (occupation === 'student') {
+                        option.selected = true;
+                    }
+
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                select.innerHTML = '<option value="other">other</option>';
+                document.getElementById('status').textContent = 'Could not load occupations; using other.';
+            }
         }
 
         async function loadOnboardingMovies() {
@@ -652,6 +730,7 @@ def index() -> str:
             if (!response.ok) throw new Error(formatBackendError(data));
             const container = document.getElementById('onboardingMovies');
             const recommendBtn = document.getElementById('recommendFromPrefsBtn');
+            container.style.display = 'block';
             container.innerHTML = '';
             recommendBtn.style.display = 'none';
             data.movies.forEach((movie) => {
@@ -712,34 +791,34 @@ def index() -> str:
         async function recommend() {
             const userIdText = document.getElementById("userId").value;
             const kText = document.getElementById("k").value;
-        
+
             const button = document.getElementById("recommendBtn");
             const status = document.getElementById("status");
             const errorBox = document.getElementById("error");
             const results = document.getElementById("results");
-        
+
             errorBox.style.display = "none";
             results.style.display = "none";
             document.getElementById("smallResultsBody").innerHTML = "";
             document.getElementById("bigResultsBody").innerHTML = "";
             document.getElementById("userInfo").style.display = "none";
-        
+
             try {
                 const userId = parseBoundedInteger(userIdText, "user_id", 0, 942);
                 const k = parseBoundedInteger(kText, "k", 1, 50);
-        
+
                 button.disabled = true;
                 status.textContent = "Computing recommendations for both branches...";
-        
+
                 const [smallData, bigData] = await Promise.all([
                     fetchRecommendations(userId, k, "small"),
                     fetchRecommendations(userId, k, "big")
                 ]);
-        
+
                 renderUserInfo(smallData);
                 renderRecommendations(smallData, "smallResultsBody");
                 renderRecommendations(bigData, "bigResultsBody");
-        
+
                 results.style.display = "block";
                 status.textContent = `Recommendations for user ${userId}.`;
             } catch (error) {
@@ -750,6 +829,7 @@ def index() -> str:
                 button.disabled = false;
             }
         }
+        window.addEventListener('DOMContentLoaded', loadOccupationOptions);
     </script>
 </body>
 </html>
