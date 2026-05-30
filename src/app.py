@@ -109,7 +109,7 @@ class RecommenderService:
         }
 
         movie_metadata = load_ml100k_movie_metadata("data/u.item")
-        user_metadata = load_ml100k_user_metadata("dics/u.user")
+        user_metadata = load_ml100k_user_metadata("data/u.user")
 
         node_emb, encoder, compressor = init_models(cfg, dataset.num_nodes)
 
