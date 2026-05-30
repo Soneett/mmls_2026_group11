@@ -514,14 +514,22 @@ def index() -> str:
                         <option value="M" selected>M</option>
                     </select>
                 </div>
-                <div><label for="prefAge">Age</label><input id="prefAge" type="text" value="25" /></div>
+                <div>
+                    <label for="prefAge">Age</label>
+                    <input id="prefAge" type="text" value="25" />
+                    <div class="field-hint">Enter a positive integer from 1 to 120.</div>
+                </div>
                 <div>
                     <label for="prefOccupation">Occupation</label>
                     <select id="prefOccupation">
                         <option value="other">Loading occupations...</option>
                     </select>
                 </div>
-                <div><label for="prefK">k</label><input id="prefK" type="text" value="5" /></div>
+                <div>
+                    <label for="prefK">Number of recommendations</label>
+                    <input id="prefK" type="text" value="5" />
+                    <div class="field-hint">Enter an integer from 1 to 50.</div>
+                </div>
             </div>
             <button id="loadOnboardingBtn" onclick="loadOnboardingMovies()" style="margin-top:0;">Load onboarding movies</button>
             <button id="recommendFromPrefsBtn" onclick="recommendFromPreferences()" style="margin-top:0; margin-left:8px; display:none;">Recommend from preferences</button>
@@ -745,15 +753,39 @@ def index() -> str:
             });
             document.getElementById('status').textContent = `Loaded ${data.movies.length} onboarding movies.`;
         }
-
         async function recommendFromPreferences() {
-            const age = parseBoundedInteger(document.getElementById('prefAge').value, 'age', 1, 120);
-            const k = parseBoundedInteger(document.getElementById('prefK').value, 'k', 1, 50);
-            const gender = document.getElementById('prefGender').value.trim();
-            const occupation = document.getElementById('prefOccupation').value.trim();
-            const selected = Array.from(document.querySelectorAll('.onboarding-movie:checked')).map((x) => Number(x.value));
-            if (selected.length === 0) throw new Error('Please select at least one movie.');
-
+        const button = document.getElementById("recommendFromPrefsBtn");
+        const errorBox = document.getElementById("error");
+        const status = document.getElementById("status");
+        const results = document.getElementById("results");
+    
+        errorBox.style.display = "none";
+        results.style.display = "none";
+        document.getElementById("smallResultsBody").innerHTML = "";
+        document.getElementById("bigResultsBody").innerHTML = "";
+        document.getElementById("userInfo").style.display = "none";
+    
+        try {
+            const ageText = document.getElementById("prefAge").value.trim();
+            const kText = document.getElementById("prefK").value.trim();
+    
+            if (!ageText || !kText) {
+                throw new Error("Please fill in all fields.");
+            }
+    
+            const age = parseBoundedInteger(ageText, "age", 1, 120);
+            const k = parseBoundedInteger(kText, "k", 1, 50);
+            const gender = document.getElementById("prefGender").value.trim();
+            const occupation = document.getElementById("prefOccupation").value.trim();
+    
+            const selected = Array.from(
+                document.querySelectorAll(".onboarding-movie:checked")
+            ).map((x) => Number(x.value));
+    
+            if (selected.length === 0) {
+                throw new Error("Please select at least one movie.");
+            }
+    
             const requestPayload = {
                 gender,
                 age,
@@ -762,31 +794,48 @@ def index() -> str:
                 k,
                 item_block_size: 1024,
             };
-
+    
+            button.disabled = true;
+            status.textContent = "Computing cold-start recommendations for both branches...";
+    
             const [smallResponse, bigResponse] = await Promise.all([
-                fetch('/api/recommend_from_preferences', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({...requestPayload, branch: 'small'})
+                fetch("/api/recommend_from_preferences", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ...requestPayload, branch: "small" }),
                 }),
-                fetch('/api/recommend_from_preferences', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({...requestPayload, branch: 'big'})
-                })
+                fetch("/api/recommend_from_preferences", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ...requestPayload, branch: "big" }),
+                }),
             ]);
-
+    
             const smallData = await smallResponse.json();
             const bigData = await bigResponse.json();
-            if (!smallResponse.ok) throw new Error(formatBackendError(smallData));
-            if (!bigResponse.ok) throw new Error(formatBackendError(bigData));
-
+    
+            if (!smallResponse.ok) {
+                throw new Error(formatBackendError(smallData));
+            }
+    
+            if (!bigResponse.ok) {
+                throw new Error(formatBackendError(bigData));
+            }
+    
             renderUserInfo(smallData);
-            renderRecommendations(smallData, 'smallResultsBody');
-            renderRecommendations(bigData, 'bigResultsBody');
-            document.getElementById('results').style.display = 'block';
-            document.getElementById('status').textContent = 'Cold-start recommendations ready for both branches.';
+            renderRecommendations(smallData, "smallResultsBody");
+            renderRecommendations(bigData, "bigResultsBody");
+    
+            results.style.display = "block";
+            status.textContent = "Cold-start recommendations ready for both branches.";
+        } catch (error) {
+            errorBox.textContent = error.message || "Incorrect input data.";
+            errorBox.style.display = "block";
+            status.textContent = "Something went wrong.";
+        } finally {
+            button.disabled = false;
         }
+    }
 
         async function recommend() {
             const userIdText = document.getElementById("userId").value;
