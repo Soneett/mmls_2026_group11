@@ -202,6 +202,7 @@ def index() -> str:
 
         input, select {
             width: 100%;
+            height: 44px;
             box-sizing: border-box;
             border: 1px solid #d1d5db;
             border-radius: 14px;
@@ -391,6 +392,16 @@ def index() -> str:
             padding: 0;
             transform: translateY(1px);
         }
+        
+        .cold-start-form {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+        
+        .cold-start-form select,
+        .cold-start-form input {
+            width: 100%;
+            height: 44px;
+        }
 
         .note {
             margin-top: 18px;
@@ -506,12 +517,12 @@ def index() -> str:
             <hr style="margin: 20px 0; border: none; border-top: 1px solid #e5e7eb;" />
             <h2 style="margin: 0 0 8px;">Cold-start recommendations</h2>
             <p class="subtitle" style="margin-bottom: 12px;">Fill profile and select watched movies from onboarding list.</p>
-            <div class="form" style="grid-template-columns: repeat(4,minmax(0,1fr));">
+            <div class="form cold-start-form">
                 <div>
                     <label for="prefGender">Gender</label>
                     <select id="prefGender">
-                        <option value="F">F</option>
-                        <option value="M" selected>M</option>
+                        <option value="F" selected>F</option>
+                        <option value="M">M</option>
                     </select>
                 </div>
                 <div>
